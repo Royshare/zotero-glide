@@ -51,13 +51,44 @@ loading inside real Zotero, previously unconfirmed) is now confirmed. See
   produces `.scaffold/build/zotero-fast-reader.xpi`, verified to contain
   the correct `manifest.json`, `bootstrap.js`, all `src/*.js` modules, and
   the `bin/macos-arm64/fast-reader-helper` binary with its executable bit
-  preserved in the zip (`zipinfo -l` confirmed `-rwxr-xr-x`). One fix was
-  needed here too: scaffold's default manifest management injects an
-  `update_url` derived from `package.json`'s `repository` field, which is
-  a local-dev placeholder, not a real update feed — shipping that in a
-  distributable manifest would look like a real (but broken) link, so
-  `build.makeManifest.enable: false` in `zotero-plugin.config.mts` now
-  keeps the hand-authored `addon/manifest.json` untouched by the build.
+  preserved in the zip (`zipinfo -l` confirmed `-rwxr-xr-x`). Two real bugs
+  were found and fixed here, both caught only by testing the *actual*
+  "Install from file" path (see below), not the RDP temporary-install path
+  used earlier — these are genuinely different code paths in Zotero and
+  passing one does not imply the other passes:
+  1. Scaffold's default manifest management injects an `update_url`
+     derived from `package.json`'s placeholder `repository` field into the
+     built manifest. Fixed with `build.makeManifest.enable: false` in
+     `zotero-plugin.config.mts`, so the hand-authored `addon/manifest.json`
+     ships untouched.
+  2. That then surfaced a **real Zotero requirement this project's own
+     research had missed**: a first real-world install attempt (the user,
+     via Zotero's own "Install Plugin From File" dialog) failed with *"The
+     add-on ... could not be installed. It may be incompatible with this
+     version of Zotero."* Root-caused live, empirically, by extracting
+     Zotero's own bundled `omni.ja` and reading its patched
+     `Extension.sys.mjs` directly (not guessed): Zotero requires
+     `applications.zotero.update_url` to be a **truthy, URL-shaped string**
+     (`!manifest.applications?.zotero?.update_url` is a hard
+     `manifestError`) — unlike stock Firefox, where this field is optional
+     — and also requires `strict_max_version` to be present (already had
+     that). Omitting `update_url` (this project's original, deliberate
+     choice, to avoid shipping a fake-looking link) or setting it to `""`
+     both fail this check with `ERROR_CORRUPT_FILE` before any
+     compatibility comparison even runs. Fixed by giving it a clearly-
+     labeled placeholder (`https://github.com/local-dev/zotero-glide/...`,
+     matching the same placeholder convention already used in
+     `package.json`'s `repository` field) — inert manifest metadata Zotero
+     requires structurally, never rendered to the user, not a claim that
+     the URL resolves to anything real.
+  3. **Verified the complete fix against the exact failing path**: called
+     `AddonManager.getInstallForFile()` → `.install()` on the real,
+     rebuilt `.xpi`, live, against real stable Zotero 10.0.1 — not the
+     beta used for earlier RDP-temporary-install testing. Result:
+     `isActive: true`, and `Zotero.MenuManager`'s registry shows the
+     correct menu entry afterward, same as the RDP path confirmed
+     earlier. This is the same install mechanism the user's own
+     Zotero uses when installing a downloaded `.xpi` by hand.
 - **`reader-helper` engine layer** (`packages/reader-helper/src/engine.rs`):
   opens real PDFs via MuPDF, reports page count/size, renders pages to
   RGBA via a bounded per-page display-list cache, extracts text, searches.
@@ -105,6 +136,14 @@ This launches Zotero with `-start-debugger-server`, connects over RDP, and
 calls `installTemporaryAddon` on `addon/` — no signing, no proxy file, no
 `extensions.json` hand-editing, and it hot-reloads on save. This is what
 was actually used to get and verify the result above.
+
+For actually installing a built `.xpi` (e.g. via Zotero's own "Install
+Plugin From File" dialog, as a real user would), see the `.xpi`
+requirements found and fixed above (`applications.zotero.update_url` must
+be a truthy URL-shaped string) — that path was separately, empirically
+verified end-to-end (`AddonManager.getInstallForFile()` → `.install()` →
+`isActive: true` → menu registered), against real stable Zotero 10.0.1,
+not just the beta used for the `serve`/RDP path above.
 
 **The plain extension-proxy-file mechanism (a file in the profile's
 `extensions/` directory containing the plugin's path, plus
