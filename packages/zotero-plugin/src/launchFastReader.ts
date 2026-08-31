@@ -13,20 +13,22 @@
 
 import { AttachmentMissingError, SpawnError } from "./errors.ts";
 import { getPdfPathForItem, type PdfLikeItem } from "./pdfAttachment.ts";
-import { buildHelperArgs } from "./buildArgs.ts";
+import { buildHelperArgs, type DockGeometry } from "./buildArgs.ts";
 
 export interface LaunchFastReaderDeps {
   /** Resolves (and, for a packed install, extracts) the helper binary's real path. */
   resolveHelperPath: () => Promise<string>;
   spawn: (command: string, args: string[]) => Promise<unknown>;
   page?: number;
+  /** v0.2: position the reader window next to Zotero's own -- see buildArgs.ts's DockGeometry. */
+  dock?: DockGeometry;
 }
 
 export async function launchFastReader(
   item: PdfLikeItem | null | undefined,
   deps: LaunchFastReaderDeps
 ): Promise<unknown> {
-  const { resolveHelperPath, spawn, page } = deps;
+  const { resolveHelperPath, spawn, page, dock } = deps;
 
   const pdfPath = await getPdfPathForItem(item);
   if (!pdfPath) {
@@ -35,7 +37,7 @@ export async function launchFastReader(
   }
 
   const helperPath = await resolveHelperPath();
-  const args = buildHelperArgs(pdfPath, page ? { page } : undefined);
+  const args = buildHelperArgs(pdfPath, { page, dock });
 
   try {
     return await spawn(helperPath, args);

@@ -22,6 +22,21 @@ use winit::window::{Window, WindowId};
 
 const DEFAULT_WINDOW_SIZE: (u32, u32) = (900, 1150);
 
+/// Requested window position/size for "docked" placement next to Zotero's
+/// own window (v0.2: visual/positional integration only -- see
+/// docs/adr's ADR and STATUS.md for why this stays a separate process
+/// rather than a literal embedded tab). `x`/`y` are the target position
+/// for the Fast Reader window itself (the caller -- fastReader.ts --
+/// computes this as Zotero's own window right edge, not Zotero's own
+/// position), and `height` matches Zotero's window height. Width is left
+/// at the normal default; only position and height change for "docked."
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DockGeometry {
+    pub x: i32,
+    pub y: i32,
+    pub height: u32,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum UiMode {
     Normal,
@@ -38,10 +53,11 @@ pub struct App<E: DocumentEngine> {
     input_buffer: String,
     file_label: String,
     first_frame_logged: bool,
+    dock: Option<DockGeometry>,
 }
 
 impl<E: DocumentEngine> App<E> {
-    pub fn new(engine: E, state: ReaderState) -> Self {
+    pub fn new(engine: E, state: ReaderState, dock: Option<DockGeometry>) -> Self {
         let file_label = state
             .file
             .file_name()
@@ -56,6 +72,7 @@ impl<E: DocumentEngine> App<E> {
             input_buffer: String::new(),
             file_label,
             first_frame_logged: false,
+            dock,
         }
     }
 
@@ -398,12 +415,16 @@ impl<E: DocumentEngine> ApplicationHandler for App<E> {
         if self.window.is_some() {
             return;
         }
-        let attrs = Window::default_attributes()
-            .with_title(&self.file_label)
-            .with_inner_size(winit::dpi::LogicalSize::new(
+        let mut attrs = Window::default_attributes().with_title(&self.file_label);
+        attrs = match self.dock {
+            Some(dock) => attrs
+                .with_position(winit::dpi::LogicalPosition::new(dock.x, dock.y))
+                .with_inner_size(winit::dpi::LogicalSize::new(DEFAULT_WINDOW_SIZE.0, dock.height)),
+            None => attrs.with_inner_size(winit::dpi::LogicalSize::new(
                 DEFAULT_WINDOW_SIZE.0,
                 DEFAULT_WINDOW_SIZE.1,
-            ));
+            )),
+        };
         let window = match event_loop.create_window(attrs) {
             Ok(w) => Rc::new(w),
             Err(e) => {

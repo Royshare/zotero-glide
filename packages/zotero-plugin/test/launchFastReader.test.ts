@@ -97,3 +97,18 @@ test("launchFastReader passes a page number through to argv when given", async (
   await launchFastReader(pdfItem("/x.pdf"), { ...deps, page: 7 });
   assert.deepEqual(calls[0], ["--file", "/x.pdf", "--page", "7"]);
 });
+
+test("launchFastReader threads dock geometry through to argv (v0.2 docked-window UX)", async () => {
+  const calls: string[][] = [];
+  const deps = baseDeps({
+    spawn: async (command: string, args: string[]) => {
+      calls.push(args);
+      return {};
+    },
+  });
+  await launchFastReader(pdfItem("/x.pdf"), {
+    ...deps,
+    dock: { x: 1200, y: 40, height: 900 },
+  });
+  assert.deepEqual(calls[0], ["/x.pdf", "--dock-x", "1200", "--dock-y", "40", "--dock-height", "900"]);
+});

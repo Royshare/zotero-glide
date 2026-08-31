@@ -2,11 +2,55 @@
 
 ## Current milestone
 
-Milestone 6 (cleanup/docs) — Milestone 3 (plugin loading and launching
-inside real Zotero, previously unconfirmed) is now confirmed end-to-end,
-including bugs a real user's install surfaced that earlier dev-mode
-testing hadn't (see below). See §20 of the original brief for the
-milestone list.
+v0.1's milestones are done (Milestone 3's plugin loading/launching is
+confirmed end-to-end, including bugs a real user's install surfaced that
+earlier dev-mode testing hadn't -- see below). Now in v0.2, two pieces
+landed so far: the plugin's TypeScript migration, and docked-window UX
+(window position/size only -- process isolation unchanged). See
+`docs/adr/001-reader-helper-stack.md` and this file's "v0.2" section
+below for what's next.
+
+## v0.2: TypeScript migration + docked-window UX
+
+Both phases from the approved v0.2 plan are done and verified live:
+
+- **TypeScript migration** (`packages/zotero-plugin`): the plugin's
+  runtime moved from 7 plain-JS files chained via
+  `Services.scriptloader.loadSubScript` to TypeScript, bundled by esbuild
+  (via `zotero-plugin-scaffold`) into one output file. Real ES
+  `import`/`export` throughout -- the `var X = class {}` workaround
+  loadSubScript's cross-file scoping fragility required (see the bug
+  writeup further down) no longer applies, since bootstrap.js now loads
+  exactly one file. `zotero-types` (community Zotero API typings)
+  independently confirmed the live-discovered `MenuData` finding (no
+  `label` field, only `l10nID`) and surfaced a nicer API in the process
+  (`context.items` on the menu context, replacing a manual
+  `Zotero.getActiveZoteroPane().getSelectedItems()` call). Node v26's
+  native TypeScript execution (unflagged type-stripping) means `node
+  --test` still runs the `.ts` test files directly -- no ts-node, no
+  jest, no babel added. 47 tests. Verified against a real packed `.xpi`
+  install (not just `zotero-plugin serve`'s dev path): menu registers
+  correctly, a real `fast-reader-helper` process spawns with correct
+  arguments.
+- **Docked-window UX** (`packages/reader-helper` + the plugin):
+  `fastReader.ts` reads Zotero's own main window geometry
+  (`Zotero.getMainWindow()`'s `screenX`/`screenY`/`outerWidth`/
+  `outerHeight`) and passes the target position (immediately right of
+  Zotero's window, matching its height) to the helper as `--dock-x
+  --dock-y --dock-height`. `reader-helper`'s `main.rs` parses these
+  (9 new tests) and `app.rs` positions the `winit` window accordingly
+  when present, falling back to the original centered default otherwise
+  -- deliberately **not** coupling the helper's lifecycle to Zotero's
+  (see the plan: this stays a fully separate, independently-closeable
+  process; only its on-screen position/size look integrated). Verified
+  live end-to-end: a real click-equivalent call
+  (`Zotero.FastReader.openInFastReader()`) against a real Zotero window
+  produced a real `fast-reader-helper` process whose actual argv
+  (checked via `ps -ww`) carried the correctly-computed dock coordinates
+  computed from that window's real on-screen geometry.
+
+Total test count after both phases: 42 Rust + 47 TypeScript = 89, all
+passing.
 
 ## Working (verified, not just written)
 
@@ -243,6 +287,17 @@ argument, launched and exited cleanly with no error dialog.
   is independently confirmed working (fixes #2-4), this is expected to be
   a non-event, but "expected" remains the gap this project's own
   principles say to close before calling it fully done.
+- **The docked window's actual on-screen appearance hasn't been visually
+  confirmed** -- verified so far: Zotero's real window geometry is read
+  correctly, the target position/height are computed correctly, and
+  those exact values reach the spawned process's real argv (checked via
+  `ps -ww`, not just unit tests). Not verified: that the window actually
+  *renders* flush against Zotero's window when a human looks at it --
+  this sandbox has no way to screenshot a native window (same
+  Accessibility/Screen-Recording gap as above). `winit`'s
+  `with_position`/`with_inner_size` are being used exactly as documented,
+  so this is expected to work, but genuinely seeing it is the next
+  concrete step for whoever can run this with a real display.
 - **Text selection**: not implemented, per the explicit v0.1 scope
   decision in `docs/adr/001-reader-helper-stack.md` and brief §8.
 - **Continuous scrolling**: not implemented, per brief §8's documented
@@ -301,10 +356,12 @@ argument, launched and exited cleanly with no error dialog.
 
 Have a human actually click "Open in Fast Reader" on a real PDF
 attachment (install the built `.xpi`, or `npm start` for the dev flow)
-and confirm the reader window appears. Every individual piece this click
-depends on is now independently verified live (menu renders with the
+and *look at it*: confirm the reader window appears, shows the correct
+label in the menu, and opens docked to the right of Zotero's window at
+the right height. Every individual piece this depends on is now
+independently verified live at the data level (menu renders with the
 correct label, the full launch pipeline spawns a real process with
-correct arguments on a real packed install) -- this remaining step is
-purely "does a literal mouse click work," not "does the underlying code
-work," which is a meaningfully smaller and lower-risk gap than it was
-before this round of fixes.
+correct arguments -- including the right dock coordinates -- on a real
+packed install) -- this remaining step is purely "does it look right to
+a human," not "does the underlying code work," which is a meaningfully
+smaller and lower-risk gap than it was at the start of this session.

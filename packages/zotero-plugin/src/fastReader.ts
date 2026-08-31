@@ -35,6 +35,7 @@ import { resolveHelperPath } from "./resolveHelper.ts";
 import { resolveHelperPathPacked } from "./extractHelper.ts";
 import { resolvePdfAttachment, type PdfLikeItem } from "./pdfAttachment.ts";
 import { launchFastReader } from "./launchFastReader.ts";
+import type { DockGeometry } from "./buildArgs.ts";
 
 type LibraryMenuContext = _ZoteroTypes.MenuManager.LibraryMenuContext;
 
@@ -219,9 +220,34 @@ class FastReaderPlugin {
       await launchFastReader(item, {
         resolveHelperPath: resolveHelper,
         spawn: (command: string, args: string[]) => this._spawn(command, args),
+        dock: this._dockGeometry(),
       });
     } catch (error) {
       this._showLaunchError(error);
+    }
+  }
+
+  /**
+   * v0.2 "docked" placement (see docs/adr and STATUS.md: a real, still
+   * fully isolated process, just positioned to *look* integrated rather
+   * than a literal embedded tab). Targets the space immediately to the
+   * right of Zotero's own window, matching its height. Best-effort --
+   * returns undefined (falling back to reader-helper's normal centered
+   * default) rather than throwing if Zotero's window geometry isn't
+   * available for any reason; this is a cosmetic feature, not something
+   * that should ever block opening the reader.
+   */
+  private _dockGeometry(): DockGeometry | undefined {
+    try {
+      const win = Zotero.getMainWindow();
+      if (!win) return undefined;
+      return {
+        x: win.screenX + win.outerWidth,
+        y: win.screenY,
+        height: win.outerHeight,
+      };
+    } catch {
+      return undefined;
     }
   }
 

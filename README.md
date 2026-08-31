@@ -147,23 +147,32 @@ binaries are produced.
 | npm command | what it does |
 |---|---|
 | `npm start` | `zotero-plugin serve` -- launch Zotero with the plugin loaded live, hot-reload on save (see above) |
-| `npm run build` | `zotero-plugin build` -- produce `.scaffold/build/zotero-fast-reader.xpi`, installable as-is |
-| `npm test` | run the 36 pure-logic unit tests (Node's built-in test runner) |
+| `npm run build` | `zotero-plugin build && tsc --noEmit` -- bundle `src/` into `.scaffold/build/zotero-fast-reader.xpi` and type-check |
+| `npm run typecheck` | `tsc --noEmit` alone |
+| `npm test` | run the 47 pure-logic unit tests -- Node's built-in test runner, running the `.ts` sources directly (Node v26's native type-stripping, no ts-node/jest/babel) |
 | `npm run release` | `zotero-plugin release` -- publish a GitHub release with the built xpi; needs a real git remote + `GITHUB_TOKEN`, not configured for this repo yet |
+
+The plugin's source (`packages/zotero-plugin/src/*.ts`) is real
+TypeScript, bundled into one file by esbuild; `addon/` holds only static
+files (`manifest.json`, `bootstrap.js`, `bin/`). See STATUS.md's "v0.2"
+section for why bundling replaced the earlier multi-file
+`loadSubScript` chain.
 
 ## Tests executed
 
 ```bash
-(cd packages/reader-helper && cargo test)   # 30 tests: engine, cache, blit pixel math,
-                                             #   session navigation/zoom/search
-(cd packages/zotero-plugin && node --test)  # 36 tests: PDF detection, platform
+(cd packages/reader-helper && cargo test)   # 42 tests: engine, cache, blit pixel math,
+                                             #   session navigation/zoom/search, argv parsing
+(cd packages/zotero-plugin && node --test)  # 47 tests: PDF detection, platform
                                              #   resolution, argv construction,
                                              #   missing-executable/spawn-failure handling
 ```
 
 Both currently pass in full; see STATUS.md for exactly what is and isn't
 additionally verified by hand (e.g., real MuPDF rendering was visually
-confirmed by inspecting a rendered PNG, not just asserted by a test).
+confirmed by inspecting a rendered PNG, not just asserted by a test; the
+same is true of the docked-window positioning -- confirmed via real argv
+inspection, not by looking at the window).
 
 ## Benchmarks
 
@@ -184,10 +193,11 @@ for image-heavy documents, and that's documented rather than hidden.
 
 ## Remaining v0.2 work
 
-- A real click on the menu item, confirming the helper process actually
-  launches from a live user action (see STATUS.md -- everything upstream
-  and downstream of that click is independently confirmed; the click
-  itself hasn't been, since this sandbox can't drive UI input).
+- A real click on the menu item, and a real look at the docked window,
+  confirming both work from a live user's perspective (see STATUS.md --
+  everything both depend on is independently confirmed at the data level;
+  actually seeing them hasn't been, since this sandbox can't drive UI
+  input or capture native windows).
 - Robust text selection + copy (deliberately deferred, not attempted as a
   half-measure -- see `docs/adr/001-*.md`).
 - Continuous scrolling (v0.1 is single-page + navigation by design).
