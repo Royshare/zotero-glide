@@ -272,7 +272,17 @@ fn blit_centered(
             if i + 3 >= page.rgba.len() {
                 break;
             }
-            let (r, g, b) = (page.rgba[i], page.rgba[i + 1], page.rgba[i + 2]);
+            let (pr, pg, pb, a) = (page.rgba[i], page.rgba[i + 1], page.rgba[i + 2], page.rgba[i + 3]);
+            // MuPDF renders with premultiplied alpha, and clears unpainted
+            // page area to fully transparent (0,0,0,0) -- not white --
+            // when alpha=true (confirmed in fz_new_pixmap_from_display_list:
+            // `if (alpha) fz_clear_pixmap(...)` zeroes everything). A page
+            // is always opaque paper, so composite against white here:
+            // premultiplied-over-white simplifies to `channel + (255 - a)`.
+            let inv_a = 255 - a as u32;
+            let r = (pr as u32 + inv_a).min(255) as u8;
+            let g = (pg as u32 + inv_a).min(255) as u8;
+            let b = (pb as u32 + inv_a).min(255) as u8;
             dst[dst_row + x as usize] = ((r as u32) << 16) | ((g as u32) << 8) | b as u32;
         }
     }
@@ -334,6 +344,52 @@ mod tests {
         assert_eq!(dst[1], 0x00FF0000);
         assert_eq!(dst[2], 0x000000FF);
         assert_eq!(dst[3], 0x000000FF);
+    }
+
+    #[test]
+    fn fully_transparent_pixels_composite_to_white_not_black() {
+        // Regression test: MuPDF clears unpainted page area to fully
+        // transparent black (0,0,0,0), not white, when rendering with
+        // alpha=true (fz_new_pixmap_from_display_list: `if (alpha)
+        // fz_clear_pixmap(...)`). A naive blit that copies RGB and drops
+        // alpha renders every unpainted part of every page as solid black.
+        let page = RenderedPage {
+            width: 1,
+            height: 1,
+            rgba: vec![0, 0, 0, 0], // premultiplied black, alpha=0
+        };
+        let mut dst = vec![0u32; 1];
+        blit_centered(&mut dst, 1, 1, &page, 0x0);
+        assert_eq!(dst[0], 0x00FFFFFF, "transparent page background must composite to white");
+    }
+
+    #[test]
+    fn opaque_pixels_are_unaffected_by_the_white_composite() {
+        let page = RenderedPage {
+            width: 1,
+            height: 1,
+            rgba: vec![0x10, 0x20, 0x30, 255], // fully opaque ink
+        };
+        let mut dst = vec![0u32; 1];
+        blit_centered(&mut dst, 1, 1, &page, 0x0);
+        assert_eq!(dst[0], 0x00102030);
+    }
+
+    #[test]
+    fn partial_alpha_blends_premultiplied_color_toward_white() {
+        // Premultiplied 50%-opaque mid-gray ink (~0x80 alpha) should land
+        // roughly halfway between its own color and white, not show the
+        // raw premultiplied (too-dark) color unmodified.
+        let page = RenderedPage {
+            width: 1,
+            height: 1,
+            rgba: vec![0x40, 0x40, 0x40, 0x80], // premultiplied gray at ~50% alpha
+        };
+        let mut dst = vec![0u32; 1];
+        blit_centered(&mut dst, 1, 1, &page, 0x0);
+        let packed = dst[0];
+        let r = ((packed >> 16) & 0xFF) as u8;
+        assert!(r > 0x40 && r < 0xFF, "expected a blend toward white, got {r:#x}");
     }
 }
 

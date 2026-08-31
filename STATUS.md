@@ -10,6 +10,26 @@ milestone list.
 
 ## Working (verified, not just written)
 
+- **Fixed: page rendering showed black instead of white for any unpainted
+  page area** -- reported by a real user against both a real scanned
+  journal article and this project's own synthetic fixtures. Root-caused
+  in the vendored MuPDF C source, not guessed: `fz_new_pixmap_from_display_list`
+  (`source/fitz/util.c`) clears a pixmap's unpainted area to fully
+  transparent black (`fz_clear_pixmap`, all-zero) rather than white when
+  `alpha=true` -- and MuPDF's pixmap data is *premultiplied* alpha
+  (documented in `fitz/pixmap.h`). `app.rs`'s `blit_centered` was
+  discarding the alpha channel and copying the raw (0,0,0) premultiplied
+  color directly, so every unpainted region of every page rendered solid
+  black -- normal for any real page with margins, i.e. all of them. Fixed
+  by compositing properly against white (`channel + (255 - alpha)`,
+  the standard premultiplied-over-white simplification) instead of
+  dropping alpha. Verified two ways: 3 new unit tests (fully-transparent
+  → white, opaque → unchanged, partial alpha → blended), and a visual
+  before/after comparison rendered through the *actual* production path
+  (`MuPdfDocumentEngine::render()`, not MuPDF's own convenience
+  `page.to_pixmap`/`save_as`, which is why this had gone unnoticed --
+  see "Important decisions" below).
+
 - **The plugin genuinely loads and registers its menu inside a real,
   running Zotero.** Confirmed against `/Applications/Zotero 2.app`
   (Zotero beta, v9.0, `org.zotero.zotero-beta`) using
@@ -233,6 +253,18 @@ argument, launched and exited cleanly with no error dialog.
 
 ## Important decisions
 
+- **Why the black-rendering bug survived earlier "visual confirmation"**:
+  the PNG-based visual checks used while first building the engine
+  (`examples/render_preview.rs`) call MuPDF's own `page.to_pixmap()` +
+  `Pixmap::save_as(..., PNG)` directly -- a different call path from the
+  production one (`MuPdfDocumentEngine::render()`, via a display list,
+  feeding `app.rs`'s own blit code). The resulting PNG *also* had the same
+  transparent-black background, but whatever tool rendered it for
+  inspection composited that transparency against its own default white
+  canvas, visually hiding the bug. Lesson applied going forward: prefer
+  verifying the actual pixels the production code path produces
+  (`examples/verify_blit_fix.rs` now does this) over trusting how a
+  downstream viewer happens to display an intermediate artifact.
 - **Stack**: Rust + `mupdf` crate + `winit` + `softbuffer`. Full rationale
   in `docs/adr/001-reader-helper-stack.md`.
 - **`addon/` subdirectory layout**: `packages/zotero-plugin/{manifest.json,
