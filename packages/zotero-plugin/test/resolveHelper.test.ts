@@ -1,11 +1,10 @@
-const { test } = require("node:test");
-const assert = require("node:assert/strict");
+import { test } from "node:test";
+import assert from "node:assert/strict";
 
-const { resolveHelperPath } = require("../addon/src/resolveHelper.js");
-const platformModule = require("../addon/src/platform.js");
-const errors = require("../addon/src/errors.js");
+import { resolveHelperPath } from "../src/resolveHelper.ts";
+import { HelperMissingError, UnsupportedPlatformError } from "../src/errors.ts";
 
-const fakePathJoin = (...parts) => parts.join("/");
+const fakePathJoin = (...parts: string[]) => parts.join("/");
 
 test("resolveHelperPath returns the platform-specific path when the file exists", async () => {
   const path = await resolveHelperPath({
@@ -14,8 +13,6 @@ test("resolveHelperPath returns the platform-specific path when the file exists"
     arch: "arm64",
     pathJoin: fakePathJoin,
     fileExists: async (p) => p === "/plugin/bin/macos-arm64/fast-reader-helper",
-    platformModule,
-    errors,
   });
   assert.equal(path, "/plugin/bin/macos-arm64/fast-reader-helper");
 });
@@ -27,8 +24,6 @@ test("resolveHelperPath works with a synchronous fileExists too", async () => {
     arch: "x64",
     pathJoin: fakePathJoin,
     fileExists: (p) => p.endsWith(".exe"),
-    platformModule,
-    errors,
   });
   assert.equal(path, "/plugin/bin/windows-x64/fast-reader-helper.exe");
 });
@@ -42,10 +37,8 @@ test("resolveHelperPath throws HelperMissingError when the binary is absent", as
         arch: "arm64",
         pathJoin: fakePathJoin,
         fileExists: async () => false,
-        platformModule,
-        errors,
       }),
-    errors.HelperMissingError
+    HelperMissingError
   );
 });
 
@@ -57,12 +50,10 @@ test("HelperMissingError names the exact path that was checked", async () => {
       arch: "x64",
       pathJoin: fakePathJoin,
       fileExists: async () => false,
-      platformModule,
-      errors,
     });
     assert.fail("expected throw");
   } catch (e) {
-    assert.ok(e instanceof errors.HelperMissingError);
+    if (!(e instanceof HelperMissingError)) throw e;
     assert.equal(e.expectedPath, "/plugin/bin/linux-x64/fast-reader-helper");
   }
 });
@@ -80,10 +71,8 @@ test("resolveHelperPath throws UnsupportedPlatformError before ever checking the
           fileExistsCalled = true;
           return true;
         },
-        platformModule,
-        errors,
       }),
-    errors.UnsupportedPlatformError
+    UnsupportedPlatformError
   );
   assert.equal(fileExistsCalled, false);
 });

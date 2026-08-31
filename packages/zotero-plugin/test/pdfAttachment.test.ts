@@ -1,13 +1,14 @@
-const { test } = require("node:test");
-const assert = require("node:assert/strict");
+import { test } from "node:test";
+import assert from "node:assert/strict";
 
-const {
+import {
   isPdfAttachmentItem,
   resolvePdfAttachment,
   getPdfPathForItem,
-} = require("../addon/src/pdfAttachment.js");
+  type PdfLikeItem,
+} from "../src/pdfAttachment.ts";
 
-function pdfAttachment(path = "/storage/ABCD1234/paper.pdf") {
+function pdfAttachment(path = "/storage/ABCD1234/paper.pdf"): PdfLikeItem {
   return {
     isPDFAttachment: () => true,
     isRegularItem: () => false,
@@ -15,7 +16,7 @@ function pdfAttachment(path = "/storage/ABCD1234/paper.pdf") {
   };
 }
 
-function snapshotAttachment() {
+function snapshotAttachment(): PdfLikeItem {
   return {
     isPDFAttachment: () => false,
     isFileAttachment: () => true,
@@ -24,7 +25,7 @@ function snapshotAttachment() {
   };
 }
 
-function regularItemWithPdf(path = "/storage/ABCD1234/paper.pdf") {
+function regularItemWithPdf(path = "/storage/ABCD1234/paper.pdf"): PdfLikeItem {
   const attachment = pdfAttachment(path);
   return {
     isRegularItem: () => true,
@@ -33,7 +34,7 @@ function regularItemWithPdf(path = "/storage/ABCD1234/paper.pdf") {
   };
 }
 
-function regularItemWithoutAttachment() {
+function regularItemWithoutAttachment(): PdfLikeItem {
   return {
     isRegularItem: () => true,
     isPDFAttachment: () => false,
@@ -41,7 +42,7 @@ function regularItemWithoutAttachment() {
   };
 }
 
-function regularItemWithNonPdfAttachment() {
+function regularItemWithNonPdfAttachment(): PdfLikeItem {
   return {
     isRegularItem: () => true,
     isPDFAttachment: () => false,
@@ -63,7 +64,7 @@ test("isPdfAttachmentItem: false for null/undefined", () => {
 });
 
 test("isPdfAttachmentItem: falls back correctly when isPDFAttachment() is absent", () => {
-  const legacyLikeItem = {
+  const legacyLikeItem: PdfLikeItem = {
     isFileAttachment: () => true,
     attachmentContentType: "application/pdf",
   };
@@ -105,7 +106,7 @@ test("getPdfPathForItem: resolves directly when given the PDF attachment itself"
 });
 
 test("getPdfPathForItem: null when the attachment file is missing on disk", async () => {
-  const attachment = {
+  const attachment: PdfLikeItem = {
     isPDFAttachment: () => true,
     isRegularItem: () => false,
     getFilePathAsync: async () => false, // Zotero's real API returns `false` for a missing file

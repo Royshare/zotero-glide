@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "Zotero 10 plugin: adds \"Open in Fast Reader\" and launches the fast-reader-helper native process. See ../../docs/adr/001-reader-helper-stack.md.",
-  "type": "commonjs",
+  "type": "module",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/local-dev/zotero-glide.git"
@@ -18,10 +18,14 @@
   "scripts": {
     "test": "node --test",
     "start": "zotero-plugin serve",
-    "build": "zotero-plugin build",
+    "build": "zotero-plugin build && tsc --noEmit",
+    "typecheck": "tsc --noEmit",
     "release": "zotero-plugin release"
   },
   "devDependencies": {
-    "zotero-plugin-scaffold": "^0.8.3"
+    "@types/node": "^26.4.0",
+    "typescript": "^7.0.2",
+    "zotero-plugin-scaffold": "^0.8.3",
+    "zotero-types": "^4.1.3"
   }
 }

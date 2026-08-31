@@ -19,7 +19,7 @@ populated -- v0.1 was developed and tested on
 `macos-arm64` only (see STATUS.md); the resolver below is written to
 support all four without assuming any one of them is present, and fails
 with a clear, categorized error (see
-`packages/zotero-plugin/addon/src/platform.js` and the Zotero UX error
+`packages/zotero-plugin/src/platform.ts` and the Zotero UX error
 categories in the brief §12) rather than silently falling back to
 something wrong.
 
@@ -30,10 +30,13 @@ and target triple.
 
 ## Platform detection
 
-`packages/zotero-plugin/addon/src/platform.js` maps Zotero's own
-`Zotero.platform` / `Zotero.arch` (or, in the standalone test suite, Node's
-`process.platform` / `process.arch`) to one of the four directory names
-above:
+`packages/zotero-plugin/src/platform.ts` maps a platform/arch string pair
+to one of the four directory names above. The real caller
+(`fastReader.ts`'s `_hostPlatform()`) derives that string from
+`Zotero.isMac`/`isWin`/`isLinux` + `Zotero.arch` -- **not**
+`Zotero.platform`, which doesn't exist in current Zotero (confirmed live;
+see STATUS.md). Tests pass Node's `process.platform`/`process.arch`
+directly:
 
 | Zotero/Node platform | Zotero/Node arch | Directory |
 |---|---|---|

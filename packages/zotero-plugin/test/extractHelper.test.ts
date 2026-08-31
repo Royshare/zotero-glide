@@ -1,38 +1,31 @@
-const { test } = require("node:test");
-const assert = require("node:assert/strict");
+import { test } from "node:test";
+import assert from "node:assert/strict";
 
-const { resolveHelperPathPacked } = require("../addon/src/extractHelper.js");
-const platformModule = require("../addon/src/platform.js");
-const errors = require("../addon/src/errors.js");
+import { resolveHelperPathPacked, type ResolveHelperPathPackedOpts } from "../src/extractHelper.ts";
+import { HelperMissingError, UnsupportedPlatformError } from "../src/errors.ts";
 
-function baseOpts(overrides = {}) {
-  const existing = new Set();
-  const written = new Map();
-  let executableCalls = [];
-  return {
-    opts: {
-      platform: "darwin",
-      arch: "arm64",
-      platformModule,
-      errors,
-      rootURI: "jar:file:///profile/extensions/fast-reader@zotero-glide.local.xpi!/",
-      destDir: "/data/fast-reader-helper/0.1.0",
-      pathJoin: (...parts) => parts.join("/"),
-      fileExists: async (p) => existing.has(p),
-      fetchBytes: async () => new Uint8Array([1, 2, 3, 4]),
-      writeBytes: async (p, bytes) => {
-        written.set(p, bytes);
-        existing.add(p);
-      },
-      setExecutable: async (p) => {
-        executableCalls.push(p);
-      },
-      ...overrides,
+function baseOpts(overrides: Partial<ResolveHelperPathPackedOpts> = {}) {
+  const existing = new Set<string>();
+  const written = new Map<string, Uint8Array>();
+  const executableCalls: string[] = [];
+  const opts: ResolveHelperPathPackedOpts = {
+    platform: "darwin",
+    arch: "arm64",
+    rootURI: "jar:file:///profile/extensions/fast-reader@zotero-glide.local.xpi!/",
+    destDir: "/data/fast-reader-helper/0.1.0",
+    pathJoin: (...parts) => parts.join("/"),
+    fileExists: async (p) => existing.has(p),
+    fetchBytes: async () => new Uint8Array([1, 2, 3, 4]),
+    writeBytes: async (p, bytes) => {
+      written.set(p, bytes);
+      existing.add(p);
     },
-    existing,
-    written,
-    executableCalls,
+    setExecutable: async (p) => {
+      executableCalls.push(p);
+    },
+    ...overrides,
   };
+  return { opts, existing, written, executableCalls };
 }
 
 test("resolveHelperPathPacked extracts to the platform-scoped destination when missing", async () => {
@@ -44,7 +37,7 @@ test("resolveHelperPathPacked extracts to the platform-scoped destination when m
 });
 
 test("resolveHelperPathPacked fetches from the correct jar-relative URL", async () => {
-  let capturedURL = null;
+  let capturedURL: string | null = null;
   const { opts } = baseOpts({
     fetchBytes: async (url) => {
       capturedURL = url;
@@ -74,7 +67,7 @@ test("resolveHelperPathPacked skips extraction (no fetch/write/chmod) when alrea
 
 test("resolveHelperPathPacked throws HelperMissingError when the fetch returns empty bytes", async () => {
   const { opts } = baseOpts({ fetchBytes: async () => new Uint8Array(0) });
-  await assert.rejects(() => resolveHelperPathPacked(opts), errors.HelperMissingError);
+  await assert.rejects(() => resolveHelperPathPacked(opts), HelperMissingError);
 });
 
 test("resolveHelperPathPacked throws HelperMissingError when the fetch itself fails", async () => {
@@ -83,7 +76,7 @@ test("resolveHelperPathPacked throws HelperMissingError when the fetch itself fa
       throw new Error("network error");
     },
   });
-  await assert.rejects(() => resolveHelperPathPacked(opts), errors.HelperMissingError);
+  await assert.rejects(() => resolveHelperPathPacked(opts), HelperMissingError);
 });
 
 test("resolveHelperPathPacked throws UnsupportedPlatformError for an unsupported host, before ever fetching", async () => {
@@ -96,7 +89,7 @@ test("resolveHelperPathPacked throws UnsupportedPlatformError for an unsupported
       return new Uint8Array([1]);
     },
   });
-  await assert.rejects(() => resolveHelperPathPacked(opts), errors.UnsupportedPlatformError);
+  await assert.rejects(() => resolveHelperPathPacked(opts), UnsupportedPlatformError);
   assert.equal(fetchCalled, false);
 });
 

@@ -7,16 +7,17 @@
  * an array to a spawn API (e.g. Zotero's `Subprocess.call({ arguments })`)
  * so paths with spaces, Unicode, and platform-specific separators are
  * never subject to shell quoting/escaping bugs.
- *
- * @param {string} pdfPath - absolute path to the PDF (any characters; not escaped, never shell-interpreted)
- * @param {{page?: number}} [opts]
- * @returns {string[]}
  */
-function buildHelperArgs(pdfPath, opts) {
+
+export interface BuildHelperArgsOptions {
+  page?: number;
+}
+
+export function buildHelperArgs(pdfPath: string, opts?: BuildHelperArgsOptions): string[] {
   if (typeof pdfPath !== "string" || pdfPath.length === 0) {
     throw new TypeError("buildHelperArgs: pdfPath must be a non-empty string");
   }
-  const page = opts && opts.page;
+  const page = opts?.page;
   if (page === undefined || page === null) {
     return [pdfPath];
   }
@@ -24,8 +25,4 @@ function buildHelperArgs(pdfPath, opts) {
     throw new TypeError(`buildHelperArgs: page must be a positive integer, got ${page}`);
   }
   return ["--file", pdfPath, "--page", String(page)];
-}
-
-if (typeof module !== "undefined" && module.exports) {
-  module.exports = { buildHelperArgs };
 }

@@ -1,16 +1,14 @@
 import { defineConfig } from "zotero-plugin-scaffold";
 import pkg from "./package.json";
 
-// No esbuild/TS bundling step: this plugin's runtime is plain JS, loaded
-// via bootstrap.js's Services.scriptloader.loadSubScript calls (see
-// addon/bootstrap.js and addon/src/errors.js's comment on why -- Zotero's
-// loadSubScript scoping rules, not a build-tooling choice). "build.assets"
-// below just copies addon/ as-is into dist/addon/, which is exactly what
-// `zotero-plugin serve`'s default (RDP temporary-addon) dev-load mechanism
-// needs -- see STATUS.md and docs/cross-platform.md for why this
-// scaffold-based mechanism replaced the plain proxy-file approach.
+// src/ (TypeScript, real import/export) is bundled by esbuild into ONE
+// output file; addon/ holds only static files (manifest.json,
+// bootstrap.js, bin/) that build.assets copies in as-is. bootstrap.js
+// loadSubScript()s that one bundled file -- see its own comment for why
+// this replaced the old multi-file loadSubScript chain (a real bug: see
+// STATUS.md's `const exportsObj` redeclaration writeup).
 export default defineConfig({
-  source: ["addon"],
+  source: ["src", "addon"],
   dist: ".scaffold/build",
   name: pkg.config.addonName,
   id: pkg.config.addonID,
@@ -40,5 +38,22 @@ export default defineConfig({
     makeManifest: {
       enable: false,
     },
+    // This plugin doesn't use Fluent (no .ftl files -- the one string in
+    // its UI is set directly via context.menuElem.setAttribute, see
+    // fastReader.ts). Without this, scaffold regenerates a broken
+    // typings/i10n.d.ts (`export type FluentMessageId = ;`, invalid
+    // syntax with zero locale files) on every build, which then fails
+    // `tsc --noEmit`.
+    fluent: {
+      dts: false,
+    },
+    esbuildOptions: [
+      {
+        entryPoints: ["src/index.ts"],
+        bundle: true,
+        target: "firefox115",
+        outfile: `.scaffold/build/addon/content/scripts/${pkg.config.addonRef}.js`,
+      },
+    ],
   },
 });

@@ -2,48 +2,36 @@
  * Zotero 7+/10 bootstrapped plugin lifecycle. Structure follows the
  * pattern documented at zotero.org/support/dev/zotero_7_for_developers
  * (still current for Zotero 10 per zotero_8_for_developers's own note)
- * and zotero/make-it-red's bootstrap.js: `startup` loads the plugin's own
- * script(s) via `Services.scriptloader.loadSubScript` with NO scope
- * argument (so top-level `var` declarations land directly in this file's
- * global -- see src/errors.js's comment for why that specifically matters
- * here), then delegates all real work to `FastReader`.
+ * and zotero/make-it-red's bootstrap.js.
  *
- * This file does no PDF/rendering/menu logic itself -- see src/fastReader.js
- * and the pure modules under src/ for that (brief §3: "keep the Zotero
- * plugin thin").
+ * Deliberately tiny: loads the ONE esbuild-bundled script (built from
+ * src/index.ts -- see ../zotero-plugin.config.mts) via
+ * `Services.scriptloader.loadSubScript`, which attaches the plugin as
+ * `Zotero.FastReader`, then just calls its lifecycle methods. No
+ * multi-file loadSubScript chain here anymore -- that's what caused a
+ * real bug (see STATUS.md: `const exportsObj` redeclaration across
+ * separately-loaded files) before the TypeScript/bundling migration.
  */
 
-/* global Services, FastReader */
+/* global Services, Zotero */
 
 function install(_data, _reason) {}
 
-async function startup({ id, version, rootURI }, _reason) {
-  const files = [
-    "src/errors.js",
-    "src/platform.js",
-    "src/resolveHelper.js",
-    "src/extractHelper.js",
-    "src/pdfAttachment.js",
-    "src/buildArgs.js",
-    "src/launchFastReader.js",
-    "src/fastReader.js",
-  ];
-  for (const file of files) {
-    Services.scriptloader.loadSubScript(rootURI + file);
-  }
-  FastReader.init({ id, version, rootURI });
-  FastReader.addToAllWindows();
+function startup({ id, version, rootURI }, _reason) {
+  Services.scriptloader.loadSubScript(rootURI + "content/scripts/fast-reader.js");
+  Zotero.FastReader.init({ id, version, rootURI });
+  Zotero.FastReader.addToAllWindows();
 }
 
 function onMainWindowLoad({ window }) {
-  if (typeof FastReader !== "undefined") {
-    FastReader.addToWindow(window);
+  if (Zotero.FastReader) {
+    Zotero.FastReader.addToWindow(window);
   }
 }
 
 function onMainWindowUnload({ window }) {
-  if (typeof FastReader !== "undefined") {
-    FastReader.removeFromWindow(window);
+  if (Zotero.FastReader) {
+    Zotero.FastReader.removeFromWindow(window);
   }
 }
 
@@ -53,8 +41,8 @@ function shutdown(_data, reason) {
   // already be mid-teardown itself. Only clean up for an actual
   // plugin-level disable/uninstall/upgrade.
   if (reason === "APP_SHUTDOWN") return;
-  if (typeof FastReader !== "undefined") {
-    FastReader.removeFromAllWindows();
+  if (Zotero.FastReader) {
+    Zotero.FastReader.removeFromAllWindows();
   }
 }
 

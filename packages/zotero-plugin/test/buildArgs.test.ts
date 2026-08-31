@@ -1,7 +1,7 @@
-const { test } = require("node:test");
-const assert = require("node:assert/strict");
+import { test } from "node:test";
+import assert from "node:assert/strict";
 
-const { buildHelperArgs } = require("../addon/src/buildArgs.js");
+import { buildHelperArgs } from "../src/buildArgs.ts";
 
 test("buildHelperArgs with no page returns a single-element argv", () => {
   assert.deepEqual(buildHelperArgs("/Users/me/Library/paper.pdf"), [
@@ -12,7 +12,6 @@ test("buildHelperArgs with no page returns a single-element argv", () => {
 test("buildHelperArgs never merges path and flags into one shell string", () => {
   const args = buildHelperArgs("/Users/me/Library/paper.pdf", { page: 3 });
   assert.deepEqual(args, ["--file", "/Users/me/Library/paper.pdf", "--page", "3"]);
-  // every element must be its own argv entry -- no embedded spaces standing in for argv separators
   for (const a of args) {
     assert.equal(typeof a, "string");
   }
@@ -35,8 +34,10 @@ test("buildHelperArgs preserves Windows-style paths untouched", () => {
 });
 
 test("buildHelperArgs rejects a non-string path", () => {
+  // @ts-expect-error -- exercising the runtime guard against non-string input
   assert.throws(() => buildHelperArgs(null), TypeError);
   assert.throws(() => buildHelperArgs(""), TypeError);
+  // @ts-expect-error -- exercising the runtime guard against non-string input
   assert.throws(() => buildHelperArgs(undefined), TypeError);
 });
 
@@ -44,5 +45,6 @@ test("buildHelperArgs rejects a non-positive-integer page", () => {
   assert.throws(() => buildHelperArgs("/a.pdf", { page: 0 }), TypeError);
   assert.throws(() => buildHelperArgs("/a.pdf", { page: -1 }), TypeError);
   assert.throws(() => buildHelperArgs("/a.pdf", { page: 1.5 }), TypeError);
+  // @ts-expect-error -- exercising the runtime guard against a non-numeric page
   assert.throws(() => buildHelperArgs("/a.pdf", { page: "3" }), TypeError);
 });

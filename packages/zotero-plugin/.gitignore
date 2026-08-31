@@ -1,4 +1,9 @@
 node_modules/
 .scaffold/
 .env
-typings/
+# typings/zotero-gaps.d.ts is hand-authored and real -- only ignore
+# scaffold's auto-generated Fluent typings file (disabled via
+# build.fluent.dts: false in zotero-plugin.config.mts, but ignore it
+# defensively in case that ever regenerates).
+typings/i10n.d.ts
+*.tsbuildinfo
