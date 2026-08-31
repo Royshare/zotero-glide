@@ -200,7 +200,6 @@ class FastReaderPlugin {
               rootURI: this.rootURI!,
               destDir: PathUtils.join(Zotero.DataDirectory.dir, "fast-reader-helper-bin", this.version!),
               pathJoin: (...parts: string[]) => PathUtils.join(...parts),
-              fileExists: (p: string) => this._fileExists(p),
               fetchBytes: (url: string) => this._fetchBytes(url),
               writeBytes: (p: string, bytes: Uint8Array) => IOUtils.write(p, bytes),
               // IOUtils.setPermissions wants a numeric mode, not a

@@ -5,33 +5,30 @@ import { resolveHelperPathPacked, type ResolveHelperPathPackedOpts } from "../sr
 import { HelperMissingError, UnsupportedPlatformError } from "../src/errors.ts";
 
 function baseOpts(overrides: Partial<ResolveHelperPathPackedOpts> = {}) {
-  const existing = new Set<string>();
   const written = new Map<string, Uint8Array>();
   const executableCalls: string[] = [];
   const opts: ResolveHelperPathPackedOpts = {
     platform: "darwin",
     arch: "arm64",
     rootURI: "jar:file:///profile/extensions/fast-reader@zotero-glide.local.xpi!/",
-    destDir: "/data/fast-reader-helper/0.1.0",
+    destDir: "/data/fast-reader-helper-bin/0.1.0",
     pathJoin: (...parts) => parts.join("/"),
-    fileExists: async (p) => existing.has(p),
     fetchBytes: async () => new Uint8Array([1, 2, 3, 4]),
     writeBytes: async (p, bytes) => {
       written.set(p, bytes);
-      existing.add(p);
     },
     setExecutable: async (p) => {
       executableCalls.push(p);
     },
     ...overrides,
   };
-  return { opts, existing, written, executableCalls };
+  return { opts, written, executableCalls };
 }
 
-test("resolveHelperPathPacked extracts to the platform-scoped destination when missing", async () => {
+test("resolveHelperPathPacked extracts to the platform-scoped destination", async () => {
   const { opts, written, executableCalls } = baseOpts();
   const path = await resolveHelperPathPacked(opts);
-  assert.equal(path, "/data/fast-reader-helper/0.1.0/macos-arm64/fast-reader-helper");
+  assert.equal(path, "/data/fast-reader-helper-bin/0.1.0/macos-arm64/fast-reader-helper");
   assert.ok(written.has(path));
   assert.deepEqual(executableCalls, [path]);
 });
@@ -51,18 +48,24 @@ test("resolveHelperPathPacked fetches from the correct jar-relative URL", async 
   );
 });
 
-test("resolveHelperPathPacked skips extraction (no fetch/write/chmod) when already extracted", async () => {
-  const { opts, existing, executableCalls } = baseOpts();
-  existing.add("/data/fast-reader-helper/0.1.0/macos-arm64/fast-reader-helper");
-  let fetchCalled = false;
-  opts.fetchBytes = async () => {
-    fetchCalled = true;
-    return new Uint8Array([1]);
-  };
-  const path = await resolveHelperPathPacked(opts);
-  assert.equal(path, "/data/fast-reader-helper/0.1.0/macos-arm64/fast-reader-helper");
-  assert.equal(fetchCalled, false);
-  assert.deepEqual(executableCalls, []);
+test("resolveHelperPathPacked always re-extracts, even when a file already exists at destPath", async () => {
+  // Regression test: an earlier version skipped extraction whenever
+  // destPath already existed, keyed only on the plugin's version string.
+  // Across many rebuilds during development the version never changed,
+  // so a real user's install kept reusing an *old* extracted binary
+  // (predating a later argv change) after every reinstall -- silently,
+  // until the stale binary didn't understand a new flag and the launch
+  // broke. There is no "skip if already extracted" path anymore: this
+  // asserts fetchBytes/writeBytes/setExecutable are called every time,
+  // unconditionally.
+  const { opts, written, executableCalls } = baseOpts({
+    fetchBytes: async () => new Uint8Array([9, 9, 9]),
+  });
+  const firstPath = await resolveHelperPathPacked(opts);
+  const secondPath = await resolveHelperPathPacked(opts);
+  assert.equal(firstPath, secondPath);
+  assert.deepEqual(executableCalls, [firstPath, secondPath]);
+  assert.deepEqual(Array.from(written.get(secondPath) ?? []), [9, 9, 9]);
 });
 
 test("resolveHelperPathPacked throws HelperMissingError when the fetch returns empty bytes", async () => {
@@ -96,5 +99,5 @@ test("resolveHelperPathPacked throws UnsupportedPlatformError for an unsupported
 test("resolveHelperPathPacked writes .exe destinations correctly for windows", async () => {
   const { opts } = baseOpts({ platform: "win32", arch: "x64" });
   const path = await resolveHelperPathPacked(opts);
-  assert.equal(path, "/data/fast-reader-helper/0.1.0/windows-x64/fast-reader-helper.exe");
+  assert.equal(path, "/data/fast-reader-helper-bin/0.1.0/windows-x64/fast-reader-helper.exe");
 });

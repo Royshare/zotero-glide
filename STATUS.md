@@ -10,6 +10,49 @@ landed so far: the plugin's TypeScript migration, and docked-window UX
 `docs/adr/001-reader-helper-stack.md` and this file's "v0.2" section
 below for what's next.
 
+## A third real bug: stale cached extraction after a reinstall
+
+After the docked-window build, a real reinstall+relaunch threw
+`SpawnError`. Root-caused live via the same technique as the earlier
+bugs, this time by *reproducing the exact scenario* rather than just
+reading logs: pre-seeded a fresh test profile's data directory with a
+copy of the actual stale binary found in the real environment
+(`fast-reader-helper-bin/0.1.0/macos-arm64/fast-reader-helper`, dated
+well before the dock-args change), then launched through the real
+plugin.
+
+The cause: `resolveHelperPathPacked` skipped extraction whenever a file
+already existed at the destination path, keyed only on the plugin's
+`package.json` version -- which never changed across the many rebuilds
+in this session (still `0.1.0`). So after every `.xpi` reinstall, the
+plugin kept silently reusing whatever binary had been extracted the
+*first* time, even though the bundle inside the newly-installed `.xpi`
+had changed. Confirmed directly: running that stale binary by hand with
+the newer `--dock-x ...` flags it predates fails immediately
+(`unrecognized argument: --dock-x`, exit code 2) -- exactly the shape of
+failure a real user would hit with no clear signal that reinstalling
+hadn't actually taken effect.
+
+Fixed by removing the "skip if exists" shortcut entirely --
+`resolveHelperPathPacked` now always re-fetches and overwrites on every
+launch (7 tests updated/added, including one that pre-populates the
+destination and asserts extraction still runs). The fetch+write is
+comfortably sub-second even for a several-MB binary (confirmed live), so
+this trades a small, constant, predictable per-launch cost for never
+serving a stale binary again -- simpler and more robust than a
+cache-invalidation scheme that would have to correctly track every
+possible reason the binary changed (which is exactly what the
+version-based scheme failed to do).
+
+**Verified against the literal reproduction**: pre-seeded the exact
+known-stale binary at the exact destination path a fresh profile would
+use, installed the fixed plugin, launched a real PDF item through
+`Zotero.FastReader.openInFastReader()`, and confirmed both that the
+stale file's mtime was overwritten and that a real `fast-reader-helper`
+process launched successfully with the correct arguments -- no manual
+cleanup of the real environment's stale file needed, since the fix is
+self-healing on next use.
+
 ## v0.2: TypeScript migration + docked-window UX
 
 Both phases from the approved v0.2 plan are done and verified live:
