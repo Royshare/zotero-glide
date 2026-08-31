@@ -31,5 +31,14 @@ export default defineConfig({
     prefs: {
       prefix: pkg.config.prefsPrefix,
     },
+    // addon/manifest.json is hand-authored and complete (see its own
+    // comments/citations) -- scaffold's default manifest management would
+    // otherwise inject an `update_url` built from package.json's
+    // `repository` field, which is a placeholder, not a real update feed.
+    // Shipping a fabricated-looking URL in a distributable manifest isn't
+    // acceptable, so scaffold is told to leave manifest.json alone.
+    makeManifest: {
+      enable: false,
+    },
   },
 });

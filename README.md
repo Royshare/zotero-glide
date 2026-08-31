@@ -124,6 +124,33 @@ cp .env.example .env   # set ZOTERO_PLUGIN_ZOTERO_BIN_PATH and an
 npm start
 ```
 
+### Installing a built `.xpi` directly
+
+For trying the plugin in your own Zotero install (rather than the
+scaffold-managed dev instance above), build an installable `.xpi`:
+
+```bash
+scripts/build-helper.sh          # builds the native helper for your OS/arch
+cd packages/zotero-plugin
+npm install
+npm run build                    # -> .scaffold/build/zotero-fast-reader.xpi
+```
+
+Then in Zotero: **Tools → Plugins** (or **Extensions**, depending on
+version) → gear icon → **Install Plugin From File...** → select the
+`.xpi`. The built `.xpi` only bundles the helper binaries present under
+`addon/bin/` at build time (`scripts/build-helper.sh` populates only the
+current host's platform -- see `docs/cross-platform.md`), so build it on
+the same OS/architecture you intend to install it on until cross-platform
+binaries are produced.
+
+| npm command | what it does |
+|---|---|
+| `npm start` | `zotero-plugin serve` -- launch Zotero with the plugin loaded live, hot-reload on save (see above) |
+| `npm run build` | `zotero-plugin build` -- produce `.scaffold/build/zotero-fast-reader.xpi`, installable as-is |
+| `npm test` | run the 36 pure-logic unit tests (Node's built-in test runner) |
+| `npm run release` | `zotero-plugin release` -- publish a GitHub release with the built xpi; needs a real git remote + `GITHUB_TOKEN`, not configured for this repo yet |
+
 ## Tests executed
 
 ```bash

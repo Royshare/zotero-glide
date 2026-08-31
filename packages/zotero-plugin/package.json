@@ -17,7 +17,9 @@
   },
   "scripts": {
     "test": "node --test",
-    "start": "zotero-plugin serve"
+    "start": "zotero-plugin serve",
+    "build": "zotero-plugin build",
+    "release": "zotero-plugin release"
   },
   "devDependencies": {
     "zotero-plugin-scaffold": "^0.8.3"

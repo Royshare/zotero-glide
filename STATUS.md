@@ -47,6 +47,17 @@ loading inside real Zotero, previously unconfirmed) is now confirmed. See
   pass after the fix (they never exercised this cross-file loading path,
   which is exactly why it wasn't caught by tests — see "Important
   decisions" below).
+- **Installable `.xpi` builds via `npm run build`** (`zotero-plugin build`):
+  produces `.scaffold/build/zotero-fast-reader.xpi`, verified to contain
+  the correct `manifest.json`, `bootstrap.js`, all `src/*.js` modules, and
+  the `bin/macos-arm64/fast-reader-helper` binary with its executable bit
+  preserved in the zip (`zipinfo -l` confirmed `-rwxr-xr-x`). One fix was
+  needed here too: scaffold's default manifest management injects an
+  `update_url` derived from `package.json`'s `repository` field, which is
+  a local-dev placeholder, not a real update feed — shipping that in a
+  distributable manifest would look like a real (but broken) link, so
+  `build.makeManifest.enable: false` in `zotero-plugin.config.mts` now
+  keeps the hand-authored `addon/manifest.json` untouched by the build.
 - **`reader-helper` engine layer** (`packages/reader-helper/src/engine.rs`):
   opens real PDFs via MuPDF, reports page count/size, renders pages to
   RGBA via a bounded per-page display-list cache, extracts text, searches.
