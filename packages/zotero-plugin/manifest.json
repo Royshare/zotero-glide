@@ -1,0 +1,14 @@
+{
+  "manifest_version": 2,
+  "name": "Zotero Fast Reader",
+  "version": "0.1.0",
+  "description": "Open PDF attachments in a lightweight, process-isolated MuPDF reader alongside Zotero's built-in reader.",
+  "author": "Zotero Fast Reader contributors",
+  "applications": {
+    "zotero": {
+      "id": "fast-reader@zotero-glide.local",
+      "strict_min_version": "7.0",
+      "strict_max_version": "10.*"
+    }
+  }
+}

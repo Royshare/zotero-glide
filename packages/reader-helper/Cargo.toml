@@ -1,0 +1,9 @@
+[package]
+name = "fast-reader-helper"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+mupdf = { version = "0.8.0", default-features = false, features = ["base14-fonts"] }
+softbuffer = "0.4.8"
+winit = "0.30.13"
