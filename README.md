@@ -130,24 +130,29 @@ For trying the plugin in your own Zotero install (rather than the
 scaffold-managed dev instance above), build an installable `.xpi`:
 
 ```bash
-scripts/build-helper.sh          # builds the native helper for your OS/arch
 cd packages/zotero-plugin
 npm install
 npm run build                    # -> .scaffold/build/zotero-fast-reader.xpi
 ```
 
+`npm run build` rebuilds the native helper itself first (a `prebuild`
+script runs `scripts/build-helper.sh` automatically -- no separate manual
+step, and no risk of packaging a stale helper binary from an earlier
+build; see STATUS.md for a real bug that came from exactly that before
+this was wired up). `npm start` does the same via `prestart`.
+
 Then in Zotero: **Tools → Plugins** (or **Extensions**, depending on
 version) → gear icon → **Install Plugin From File...** → select the
-`.xpi`. The built `.xpi` only bundles the helper binaries present under
-`addon/bin/` at build time (`scripts/build-helper.sh` populates only the
-current host's platform -- see `docs/cross-platform.md`), so build it on
-the same OS/architecture you intend to install it on until cross-platform
-binaries are produced.
+`.xpi`. The built `.xpi` only bundles the helper binary for the host you
+built it on (`scripts/build-helper.sh` populates only the current host's
+platform under `addon/bin/` -- see `docs/cross-platform.md`), so build it
+on the same OS/architecture you intend to install it on until
+cross-platform binaries are produced.
 
 | npm command | what it does |
 |---|---|
 | `npm start` | `zotero-plugin serve` -- launch Zotero with the plugin loaded live, hot-reload on save (see above) |
-| `npm run build` | `zotero-plugin build && tsc --noEmit` -- bundle `src/` into `.scaffold/build/zotero-fast-reader.xpi` and type-check |
+| `npm run build` | rebuilds the native helper (`prebuild`), then `zotero-plugin build && tsc --noEmit` -- bundles `src/` into `.scaffold/build/zotero-fast-reader.xpi` and type-checks |
 | `npm run typecheck` | `tsc --noEmit` alone |
 | `npm test` | run the 47 pure-logic unit tests -- Node's built-in test runner, running the `.ts` sources directly (Node v26's native type-stripping, no ts-node/jest/babel) |
 | `npm run release` | `zotero-plugin release` -- publish a GitHub release with the built xpi; needs a real git remote + `GITHUB_TOKEN`, not configured for this repo yet |

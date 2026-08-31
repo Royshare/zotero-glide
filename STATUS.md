@@ -53,6 +53,21 @@ process launched successfully with the correct arguments -- no manual
 cleanup of the real environment's stale file needed, since the fix is
 self-healing on next use.
 
+**A related DX gap surfaced right after this fix**: the user's own
+`npm run build` still produced a failing `.xpi`, even after pulling the
+fix above. Cause: `npm run build` (`zotero-plugin build && tsc --noEmit`)
+only *packages* whatever is currently sitting in `addon/bin/<platform>/`
+-- it never rebuilds the Rust helper itself. That step
+(`scripts/build-helper.sh`) was documented as a separate manual
+prerequisite, easy to forget on a rebuild (every `.xpi` this session was
+built by remembering to run it first). Fixed by adding `prebuild`/
+`prestart` npm scripts that run `scripts/build-helper.sh` automatically
+-- `npm run build` and `npm start` are now self-sufficient by
+construction; there's no longer a manual step to forget. Verified by
+deleting `addon/bin/macos-arm64/` entirely (simulating a fresh clone)
+and confirming a bare `npm run build` reconstructs a complete, correctly
+built `.xpi` on its own.
+
 ## v0.2: TypeScript migration + docked-window UX
 
 Both phases from the approved v0.2 plan are done and verified live:

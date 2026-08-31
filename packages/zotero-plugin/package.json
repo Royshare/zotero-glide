@@ -17,7 +17,9 @@
   },
   "scripts": {
     "test": "node --test",
+    "prestart": "bash ../../scripts/build-helper.sh",
     "start": "zotero-plugin serve",
+    "prebuild": "bash ../../scripts/build-helper.sh",
     "build": "zotero-plugin build && tsc --noEmit",
     "typecheck": "tsc --noEmit",
     "release": "zotero-plugin release"
