@@ -39,7 +39,7 @@ Zotero (unmodified)
      │
      │  right-click a PDF attachment -> "Open in Fast Reader"
      ▼
-packages/zotero-plugin/            (thin: menu + process spawn only)
+packages/zotero-plugin/addon/       (thin: menu + process spawn only)
      │  Subprocess.call({ command, arguments: [pdfPath] })
      │  argv array, never a shell string (brief §7)
      ▼
@@ -92,10 +92,9 @@ scripts/setup.sh
 
 This generates PDF fixtures, builds `reader-helper` in release mode, runs
 its test suite, copies the built binary into
-`packages/zotero-plugin/bin/<platform>/`, runs the plugin's test suite,
-and creates an isolated Zotero dev profile. See individual scripts under
-`scripts/` to run any one step alone (`build-helper.sh`,
-`dev-profile.sh`, `benchmark-reader.sh`).
+`packages/zotero-plugin/addon/bin/<platform>/`, and runs the plugin's test
+suite. See individual scripts under `scripts/` to run any one step alone
+(`build-helper.sh`, `benchmark-reader.sh`).
 
 ## Run
 
@@ -111,11 +110,18 @@ Keyboard: `PageDown`/`Right`/`Space` next page, `PageUp`/`Left` previous,
 next hit, `Shift+Enter` previous), `Ctrl/Cmd+G` go to page, `Esc`
 close search/goto or quit.
 
-Inside Zotero (once the dev profile is loaded -- see STATUS.md for the
-current, honestly-reported state of this):
+Inside Zotero -- confirmed working via `zotero-plugin-scaffold`, which
+installs the plugin as a temporary add-on over the Firefox Remote
+Debugging Protocol and hot-reloads on save (see STATUS.md's "Zotero dev
+loading" section for how this was verified and why it replaced an earlier
+proxy-file attempt that didn't work in this environment):
 
 ```bash
-scripts/run-zotero-dev.sh
+cd packages/zotero-plugin
+npm install
+cp .env.example .env   # set ZOTERO_PLUGIN_ZOTERO_BIN_PATH and an
+                        # isolated ZOTERO_PLUGIN_PROFILE_PATH/DATA_DIR
+npm start
 ```
 
 ## Tests executed
@@ -151,8 +157,10 @@ for image-heavy documents, and that's documented rather than hidden.
 
 ## Remaining v0.2 work
 
-- Get the plugin confirmed loading inside a real Zotero 10 window (see
-  STATUS.md -- this is the top open item).
+- A real click on the menu item, confirming the helper process actually
+  launches from a live user action (see STATUS.md -- everything upstream
+  and downstream of that click is independently confirmed; the click
+  itself hasn't been, since this sandbox can't drive UI input).
 - Robust text selection + copy (deliberately deferred, not attempted as a
   half-measure -- see `docs/adr/001-*.md`).
 - Continuous scrolling (v0.1 is single-page + navigation by design).

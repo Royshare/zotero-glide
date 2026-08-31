@@ -3,18 +3,24 @@
 ## Binary layout
 
 ```
-packages/zotero-plugin/bin/
+packages/zotero-plugin/addon/bin/
 ├── macos-arm64/fast-reader-helper
 ├── macos-x64/fast-reader-helper
 ├── windows-x64/fast-reader-helper.exe
 └── linux-x64/fast-reader-helper
 ```
 
-Only the platforms/architectures actually built are populated -- v0.1 was
-developed and tested on `macos-arm64` only (see STATUS.md); the resolver
-below is written to support all four without assuming any one of them is
-present, and fails with a clear, categorized error (see `docs/../packages/zotero-plugin/src/resolvePlatform.js` and the Zotero UX
-error categories in the brief §12) rather than silently falling back to
+`addon/` is the plugin's own shippable root (contains `manifest.json`,
+`bootstrap.js`) -- this layout matches `zotero-plugin-scaffold`'s
+convention (see STATUS.md's "Zotero dev loading" section for why that
+tool, not a hand-rolled proxy file, is the dev workflow that actually
+works here). Only the platforms/architectures actually built are
+populated -- v0.1 was developed and tested on
+`macos-arm64` only (see STATUS.md); the resolver below is written to
+support all four without assuming any one of them is present, and fails
+with a clear, categorized error (see
+`packages/zotero-plugin/addon/src/platform.js` and the Zotero UX error
+categories in the brief §12) rather than silently falling back to
 something wrong.
 
 `scripts/build-helper.sh` builds the current host's target and copies the
@@ -24,7 +30,7 @@ and target triple.
 
 ## Platform detection
 
-`packages/zotero-plugin/src/resolvePlatform.js` maps Zotero's own
+`packages/zotero-plugin/addon/src/platform.js` maps Zotero's own
 `Zotero.platform` / `Zotero.arch` (or, in the standalone test suite, Node's
 `process.platform` / `process.arch`) to one of the four directory names
 above:

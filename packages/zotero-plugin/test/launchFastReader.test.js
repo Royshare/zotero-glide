@@ -1,12 +1,12 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 
-const { launchFastReader } = require("../src/launchFastReader.js");
-const errors = require("../src/errors.js");
-const platform = require("../src/platform.js");
-const resolveHelper = require("../src/resolveHelper.js");
-const pdfAttachment = require("../src/pdfAttachment.js");
-const buildArgs = require("../src/buildArgs.js");
+const { launchFastReader } = require("../addon/src/launchFastReader.js");
+const errors = require("../addon/src/errors.js");
+const platform = require("../addon/src/platform.js");
+const resolveHelper = require("../addon/src/resolveHelper.js");
+const pdfAttachment = require("../addon/src/pdfAttachment.js");
+const buildArgs = require("../addon/src/buildArgs.js");
 
 function baseDeps(overrides = {}) {
   return {

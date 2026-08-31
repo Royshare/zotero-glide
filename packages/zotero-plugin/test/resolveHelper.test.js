@@ -1,9 +1,9 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 
-const { resolveHelperPath } = require("../src/resolveHelper.js");
-const platformModule = require("../src/platform.js");
-const errors = require("../src/errors.js");
+const { resolveHelperPath } = require("../addon/src/resolveHelper.js");
+const platformModule = require("../addon/src/platform.js");
+const errors = require("../addon/src/errors.js");
 
 const fakePathJoin = (...parts) => parts.join("/");
 

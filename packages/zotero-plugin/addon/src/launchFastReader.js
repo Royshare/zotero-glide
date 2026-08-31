@@ -63,8 +63,6 @@ async function launchFastReader(item, deps) {
   }
 }
 
-const exportsObj = { launchFastReader };
-
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = exportsObj;
+  module.exports = { launchFastReader };
 }

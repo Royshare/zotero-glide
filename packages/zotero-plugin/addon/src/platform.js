@@ -31,8 +31,6 @@ function helperFileName(platformDir) {
   return platformDir.startsWith("windows-") ? "fast-reader-helper.exe" : "fast-reader-helper";
 }
 
-const exportsObj = { resolvePlatformDir, helperFileName };
-
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = exportsObj;
+  module.exports = { resolvePlatformDir, helperFileName };
 }

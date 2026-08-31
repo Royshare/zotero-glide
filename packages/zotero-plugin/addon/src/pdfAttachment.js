@@ -60,8 +60,6 @@ async function getPdfPathForItem(item) {
   return path || null;
 }
 
-const exportsObj = { isPdfAttachmentItem, resolvePdfAttachment, getPdfPathForItem };
-
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = exportsObj;
+  module.exports = { isPdfAttachmentItem, resolvePdfAttachment, getPdfPathForItem };
 }

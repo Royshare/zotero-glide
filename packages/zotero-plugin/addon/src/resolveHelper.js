@@ -30,8 +30,6 @@ async function resolveHelperPath(opts) {
   return helperPath;
 }
 
-const exportsObj = { resolveHelperPath };
-
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = exportsObj;
+  module.exports = { resolveHelperPath };
 }

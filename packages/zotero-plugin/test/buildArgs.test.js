@@ -1,7 +1,7 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 
-const { buildHelperArgs } = require("../src/buildArgs.js");
+const { buildHelperArgs } = require("../addon/src/buildArgs.js");
 
 test("buildHelperArgs with no page returns a single-element argv", () => {
   assert.deepEqual(buildHelperArgs("/Users/me/Library/paper.pdf"), [

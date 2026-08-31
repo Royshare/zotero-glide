@@ -26,8 +26,6 @@ function buildHelperArgs(pdfPath, opts) {
   return ["--file", pdfPath, "--page", String(page)];
 }
 
-const exportsObj = { buildHelperArgs };
-
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = exportsObj;
+  module.exports = { buildHelperArgs };
 }

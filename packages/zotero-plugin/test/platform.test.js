@@ -1,8 +1,8 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 
-const { resolvePlatformDir, helperFileName } = require("../src/platform.js");
-const errors = require("../src/errors.js");
+const { resolvePlatformDir, helperFileName } = require("../addon/src/platform.js");
+const errors = require("../addon/src/errors.js");
 
 test("resolvePlatformDir maps known platform/arch pairs", () => {
   assert.equal(resolvePlatformDir("darwin", "arm64", errors), "macos-arm64");

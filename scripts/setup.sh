@@ -12,18 +12,21 @@ PY="$(command -v python3)"
 echo "==> Building reader-helper (release) + running its tests"
 (cd "$ROOT/packages/reader-helper" && cargo build --release && cargo test)
 
-echo "==> Copying the built helper into packages/zotero-plugin/bin/<platform>/"
+echo "==> Copying the built helper into packages/zotero-plugin/addon/bin/<platform>/"
 "$ROOT/scripts/build-helper.sh"
 
 echo "==> Running zotero-plugin unit tests"
 (cd "$ROOT/packages/zotero-plugin" && node --test)
 
-echo "==> Setting up an isolated Zotero dev profile"
-"$ROOT/scripts/dev-profile.sh"
-
 cat <<'EOF'
 
 Setup complete. Next steps:
-  scripts/run-zotero-dev.sh       # launch Zotero against the isolated dev profile
+  cd packages/zotero-plugin && npm install && cp .env.example .env
+      # set ZOTERO_PLUGIN_ZOTERO_BIN_PATH / PROFILE_PATH / DATA_DIR, then:
+  npm start                                  # launch Zotero with the plugin loaded (see STATUS.md)
   bash scripts/benchmark-reader.sh release   # performance validation (docs/benchmark-methodology.md)
+
+(scripts/dev-profile.sh + run-zotero-dev.sh are a documented fallback
+using the classic extension-proxy-file mechanism -- see STATUS.md for why
+`npm start` above is the path that's actually been verified to work.)
 EOF

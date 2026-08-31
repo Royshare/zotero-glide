@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Builds fast-reader-helper for the current host and copies it into
-# packages/zotero-plugin/bin/<platform-dir>/, matching the layout
+# packages/zotero-plugin/addon/bin/<platform-dir>/, matching the layout
 # resolvePlatformDir() (packages/zotero-plugin/src/platform.js) and
 # docs/cross-platform.md expect. Does not cross-compile -- run this once
 # per target platform, on that platform (or under a matching cross
@@ -9,7 +9,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HELPER_DIR="$ROOT/packages/reader-helper"
-PLUGIN_BIN_DIR="$ROOT/packages/zotero-plugin/bin"
+PLUGIN_BIN_DIR="$ROOT/packages/zotero-plugin/addon/bin"
 
 os="$(uname -s)"
 arch="$(uname -m)"

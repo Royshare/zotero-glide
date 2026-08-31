@@ -5,7 +5,7 @@ const {
   isPdfAttachmentItem,
   resolvePdfAttachment,
   getPdfPathForItem,
-} = require("../src/pdfAttachment.js");
+} = require("../addon/src/pdfAttachment.js");
 
 function pdfAttachment(path = "/storage/ABCD1234/paper.pdf") {
   return {

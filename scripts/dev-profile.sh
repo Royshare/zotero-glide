@@ -15,7 +15,7 @@
 # convention, not something invented for this project).
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PLUGIN_DIR="$ROOT/packages/zotero-plugin"
+PLUGIN_DIR="$ROOT/packages/zotero-plugin/addon"
 PLUGIN_ID="fast-reader@zotero-glide.local"
 PROFILE_DIR="${PROFILE_DIR:-$HOME/.zotero-fast-reader-dev-profile}"
 
