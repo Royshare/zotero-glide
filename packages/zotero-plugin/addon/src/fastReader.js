@@ -23,7 +23,7 @@
 
 /* global Zotero, Services, ChromeUtils, IOUtils, PathUtils */
 /* global FastReaderError, UnsupportedPlatformError, HelperMissingError, AttachmentMissingError, SpawnError, ReaderCrashedError */
-/* global resolvePlatformDir, helperFileName, resolveHelperPath, isPdfAttachmentItem, resolvePdfAttachment, getPdfPathForItem, buildHelperArgs, launchFastReader */
+/* global resolvePlatformDir, helperFileName, resolveHelperPath, isPdfAttachmentItem, resolvePdfAttachment, getPdfPathForItem, buildHelperArgs, launchFastReader, resolveHelperPathPacked */
 
 // bootstrap.js loadSubScript's errors.js, platform.js, resolveHelper.js,
 // pdfAttachment.js, buildArgs.js, and launchFastReader.js (in that
@@ -44,6 +44,7 @@ var errorsModule = {
 };
 var platformModule = { resolvePlatformDir, helperFileName };
 var resolveHelperModule = { resolveHelperPath };
+var extractHelperModule = { resolveHelperPathPacked };
 var pdfAttachmentModule = { isPdfAttachmentItem, resolvePdfAttachment, getPdfPathForItem };
 var buildArgsModule = { buildHelperArgs };
 var launchFastReaderModule = { launchFastReader };
@@ -87,8 +88,21 @@ var FastReader = {
       menus: [
         {
           menuType: "menuitem",
-          label: "Open in Fast Reader",
+          // Zotero.MenuManager's item builder (_initMenu) only ever reads
+          // l10nID for display text -- a plain `label` field is accepted
+          // by registerMenu() (nothing rejects it) but silently never
+          // shown, leaving a blank menu entry. Confirmed by reading
+          // Zotero's own _initMenu source live. Rather than add a Fluent
+          // .ftl file + locale registration for one static string, set
+          // the XUL `label` attribute directly on the real menu element
+          // -- context.menuElem is exactly that element (see
+          // menuManager.js's _updateMenuEvents), and XUL menuitems have
+          // always read their display text from `label` regardless of
+          // whether Fluent or plain code set it. onShowing runs every
+          // time the popup is about to show, so this is safe to redo
+          // each time (idempotent, and cheap).
           onShowing: async (_event, context) => {
+            context.menuElem.setAttribute("label", "Open in Fast Reader");
             const item = FastReader._getSelectedItem();
             const attachment = await pdfAttachmentModule.resolvePdfAttachment(item);
             context.setVisible(!!attachment);
@@ -113,6 +127,18 @@ var FastReader = {
   _getSelectedItem() {
     const items = Zotero.getActiveZoteroPane().getSelectedItems();
     return items && items.length === 1 ? items[0] : null;
+  },
+
+  _hostPlatform() {
+    // Zotero.platform does not exist in current Zotero (confirmed live:
+    // undefined) -- Zotero.isMac/isWin/isLinux are the real API. Mapped
+    // to the same "mac"/"win"/"linux" strings platform.js's
+    // resolvePlatformDir() already expects and is tested against, so no
+    // change needed there.
+    if (Zotero.isMac) return "mac";
+    if (Zotero.isWin) return "win";
+    if (Zotero.isLinux) return "linux";
+    return "unknown";
   },
 
   async _fileExists(path) {
@@ -156,14 +182,39 @@ var FastReader = {
 
   async openInFastReader(item) {
     try {
+      const isPacked = this.rootURI.startsWith("jar:");
+      // A real "Install Plugin From File" install keeps the .xpi packed
+      // (rootURI is jar:file:///.../fast-reader@....xpi!/); the dev
+      // workflow (zotero-plugin-scaffold's `serve`) installs it unpacked
+      // to a real directory. loadSubScript handles both transparently
+      // for *script* loading, which is why only the helper-binary path
+      // (which needs a real executable on disk, not a resource inside a
+      // zip) needs this branch at all -- see addon/src/extractHelper.js.
+      const resolveHelper = isPacked
+        ? {
+            resolveHelperPath: (args) =>
+              extractHelperModule.resolveHelperPathPacked({
+                ...args,
+                rootURI: this.rootURI,
+                destDir: PathUtils.join(Zotero.DataDirectory.dir, "fast-reader-helper-bin", this.version),
+                fetchBytes: (url) => this._fetchBytes(url),
+                writeBytes: (p, bytes) => IOUtils.write(p, bytes),
+                // IOUtils.setPermissions wants a numeric mode, not a
+                // string -- "755" is silently misinterpreted (confirmed
+                // live: it does not produce rwxr-xr-x), 0o755 does.
+                setExecutable: (p) => IOUtils.setPermissions(p, 0o755),
+              }),
+          }
+        : resolveHelperModule;
+
       await launchFastReaderModule.launchFastReader(item, {
         errors: errorsModule,
         platform: platformModule,
-        resolveHelper: resolveHelperModule,
+        resolveHelper,
         pdfAttachment: pdfAttachmentModule,
         buildArgs: buildArgsModule,
-        rootDir: this._rootDirFromURI(),
-        hostPlatform: Zotero.platform,
+        rootDir: isPacked ? null : this._rootDirFromURI(),
+        hostPlatform: this._hostPlatform(),
         hostArch: Zotero.arch,
         pathJoin: (...parts) => PathUtils.join(...parts),
         fileExists: (p) => this._fileExists(p),
@@ -175,10 +226,17 @@ var FastReader = {
   },
 
   _rootDirFromURI() {
-    // rootURI is a `file://` or `jar:file://...!/` URI depending on
-    // packed vs. unpacked install; PathUtils works from a plain OS path,
-    // so unwrap it via a real nsIFile per Zotero's own conventions.
+    // Only valid for an unpacked (plain file://) install -- see the
+    // isPacked branch in openInFastReader above.
     return Zotero.File.pathToFile(this.rootURI).path;
+  },
+
+  async _fetchBytes(url) {
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`failed to fetch ${url}: HTTP ${response.status}`);
+    }
+    return new Uint8Array(await response.arrayBuffer());
   },
 
   _showLaunchError(error) {

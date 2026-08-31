@@ -2,9 +2,11 @@
 
 ## Current milestone
 
-Milestone 6 (cleanup/docs) — the last open item from Milestone 3 (plugin
-loading inside real Zotero, previously unconfirmed) is now confirmed. See
-§20 of the original brief for the milestone list.
+Milestone 6 (cleanup/docs) — Milestone 3 (plugin loading and launching
+inside real Zotero, previously unconfirmed) is now confirmed end-to-end,
+including bugs a real user's install surfaced that earlier dev-mode
+testing hadn't (see below). See §20 of the original brief for the
+milestone list.
 
 ## Working (verified, not just written)
 
@@ -154,23 +156,73 @@ attempts against stable Zotero 10.0.1, with `extensions.json` staying
 working-for-some-setups fallback, but scaffold is the path that's actually
 been proven end-to-end here, and is now the primary documented workflow.
 
+## A second real user hit a real install, and reported real bugs -- all now fixed and verified live
+
+The first person to actually install the `.xpi` (not `zotero-plugin serve`)
+hit two failures the RDP-temporary-install testing above never exercised:
+an empty/blank context-menu entry, and a crash (`Zotero.File.pathToFile`
+`TypeError`) when clicking it. Root-caused and fixed all three underlying
+bugs by reproducing them on an isolated test profile (same real
+"Install Plugin From File" path, not simulated) and tracing execution
+live via RDP console evaluation, step by step, exactly as the earlier
+`loadSubScript`/`update_url` bugs were found:
+
+1. **Blank menu label.** `Zotero.MenuManager`'s item builder (`_initMenu`,
+   read live from the running process) only ever sets a menu item's
+   visible text from `l10nID` (Fluent) -- a plain `label` field is
+   silently accepted by `registerMenu()` but never rendered. Fixed by
+   setting `context.menuElem.setAttribute("label", ...)` directly inside
+   `onShowing` (`context.menuElem` is the real XUL element, confirmed by
+   reading `_updateMenuEvents`'s source) rather than adding a Fluent
+   `.ftl` file for one static string.
+2. **Crash resolving the helper path.** A real "Install from file" install
+   keeps the `.xpi` **packed** -- `rootURI` is
+   `jar:file:///.../fast-reader@....xpi!/`, not a plain `file://`
+   directory (confirmed live: `AddonManager.getAddonByID(...).getResourceURI()`).
+   `loadSubScript` handles `jar:` URIs transparently for *script* loading
+   (that's why the plugin's JS ran at all), but `Zotero.File.pathToFile()`
+   cannot turn a `jar:...!/` URI into a real `nsIFile`, and even if it
+   could, `Subprocess.call()` cannot execute a binary living inside a zip
+   in the first place. Fixed with a new pure module,
+   `addon/src/extractHelper.js` (`resolveHelperPathPacked`, 7 new unit
+   tests), which `fastReader.js` uses instead of the plain
+   `resolveHelper.js` whenever `rootURI.startsWith("jar:")`: it `fetch()`s
+   the binary's bytes straight out of the packed xpi (confirmed live:
+   `fetch()` works transparently on `jar:` URIs), writes them to a real,
+   version-scoped path under `Zotero.DataDirectory.dir`, and marks it
+   executable -- once per version, cached thereafter.
+3. **`Zotero.platform` is `undefined`** in current Zotero (confirmed
+   live) -- `Zotero.isMac`/`isWin`/`isLinux` are the real API. This made
+   every real launch attempt fail with `UnsupportedPlatformError:
+   .../undefined/aarch64` regardless of the other two fixes. Fixed with a
+   small `_hostPlatform()` mapping in `fastReader.js`; `platform.js`
+   itself (already tested against plain "mac"/"win"/"linux" strings)
+   needed no change.
+4. **`IOUtils.setPermissions(path, "755")` silently does the wrong
+   thing** -- it wants a numeric mode (`0o755`), not the string `"755"`
+   (confirmed live: the string version produced `-wxr----t`, not
+   `-rwxr-xr-x`, and left the binary unreadable though still technically
+   executable by its owner). Found while verifying fix #2. Fixed.
+
+**All four verified together, live, end-to-end, through the actual
+`FastReader.openInFastReader()` method** (not a hand-rolled equivalent) --
+a real PDF item, a real packed install, `Zotero.isMac`-based platform
+detection, real extraction to `Zotero.DataDirectory.dir`, and a real
+`fast-reader-helper` process observed in `ps` with the correct file
+argument, launched and exited cleanly with no error dialog.
+
 ## Not working / not verified
 
-- **Clicking the real menu item through the real UI, and confirming the
-  helper process actually launches from a live click, has not been done.**
-  What *is* confirmed: the menu registers with the correct target/label/
-  hooks (above), and `launchFastReader`'s spawn logic is separately
-  unit-tested including real success and failure paths. What's not yet
-  confirmed: actually right-clicking a PDF attachment in the real UI and
-  watching `fast-reader-helper` appear in `ps`. This sandbox has no
-  Accessibility/Screen-Recording permission to drive that click or see
-  the result, and attempts to trigger it by evaluating JS remotely hit an
-  unrelated RDP console flakiness (async evaluations started reporting
-  perpetually-"pending" promises after several addon reloads in the same
-  debug session — likely a stale console-actor/target issue after
-  repeated reloads, not a plugin bug). Next person: this should be a
-  two-minute manual check with a real click, now that loading itself is
-  confirmed.
+- **An actual mouse click on the real menu item, through the real UI,
+  has still not been performed** -- everything above was driven via
+  direct method calls (`FastReader.openInFastReader(item)`) replicating
+  exactly what `onCommand` does, not a literal right-click + menu
+  selection, since this sandbox still has no Accessibility/Screen-Recording
+  permission to drive or observe that. Given the menu now visibly renders
+  with the correct label (fix #1) and everything the click would trigger
+  is independently confirmed working (fixes #2-4), this is expected to be
+  a non-event, but "expected" remains the gap this project's own
+  principles say to close before calling it fully done.
 - **Text selection**: not implemented, per the explicit v0.1 scope
   decision in `docs/adr/001-reader-helper-stack.md` and brief §8.
 - **Continuous scrolling**: not implemented, per brief §8's documented
@@ -215,11 +267,12 @@ been proven end-to-end here, and is now the primary documented workflow.
 
 ## Next concrete step
 
-Manually click "Open in Fast Reader" on a real PDF attachment in the
-scaffold-launched Zotero window (`npm start` in `packages/zotero-plugin`,
-then a normal click — no automation needed, just a human) and confirm
-`fast-reader-helper` appears in `ps` with the right file argument. Given
-everything upstream of that click is now independently confirmed (menu
-registration) and everything downstream of it is unit-tested (spawn
-logic), this is expected to just work, but "expected to work" is exactly
-the gap this project's own principles say to close before calling it done.
+Have a human actually click "Open in Fast Reader" on a real PDF
+attachment (install the built `.xpi`, or `npm start` for the dev flow)
+and confirm the reader window appears. Every individual piece this click
+depends on is now independently verified live (menu renders with the
+correct label, the full launch pipeline spawns a real process with
+correct arguments on a real packed install) -- this remaining step is
+purely "does a literal mouse click work," not "does the underlying code
+work," which is a meaningfully smaller and lower-risk gap than it was
+before this round of fixes.

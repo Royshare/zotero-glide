@@ -22,6 +22,7 @@ async function startup({ id, version, rootURI }, _reason) {
     "src/errors.js",
     "src/platform.js",
     "src/resolveHelper.js",
+    "src/extractHelper.js",
     "src/pdfAttachment.js",
     "src/buildArgs.js",
     "src/launchFastReader.js",
