@@ -9,6 +9,12 @@
 # toolchain you've set up yourself; not provided here, see
 # docs/cross-platform.md's CI matrix sketch for what that would look like).
 set -euo pipefail
+# The release workflow assembles binaries built on several OSes; it sets this so the
+# npm prebuild hook does not try to build the (single, host-only) helper again.
+if [[ -n "${FAST_READER_SKIP_HELPER_BUILD:-}" ]]; then
+  echo "FAST_READER_SKIP_HELPER_BUILD set: using the helper binaries already in addon/bin/"
+  exit 0
+fi
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HELPER_DIR="$ROOT/packages/reader-helper"
 PLUGIN_BIN_DIR="$ROOT/packages/zotero-plugin/addon/bin"

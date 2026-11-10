@@ -1,0 +1,85 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Zotero Fast Reader contributors
+#
+# Runs on every push and pull request. NOTE: written without being able to run GitHub
+# Actions locally; every command below was run on macOS arm64, but the Windows and
+# macOS-Intel legs in particular have not been seen to pass -- expect the first run to
+# need adjustments (see docs/cross-platform.md).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  compliance:
+    name: License headers and notices
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/reader-helper
+      - name: Every source file has an SPDX header
+        run: python3 scripts/add-spdx.py --check
+      - name: THIRD_PARTY_NOTICES.md is up to date
+        run: |
+          (cd packages/reader-helper && cargo fetch --locked)
+          python3 scripts/gen-third-party.py --check
+
+  helper:
+    name: Helper (${{ matrix.bin_dir }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-14,       bin_dir: macos-arm64 }
+          - { os: macos-15-intel, bin_dir: macos-x64 }
+          - { os: windows-latest, bin_dir: windows-x64 }
+          # 22.04, not latest: the binary needs glibc >= the build machine's, so build on older.
+          - { os: ubuntu-22.04,   bin_dir: linux-x64 }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/reader-helper
+      - name: Test fixtures
+        run: python3 scripts/gen_fixtures.py
+      - name: cargo test
+        working-directory: packages/reader-helper
+        run: cargo test --release --locked
+      - name: cargo build
+        working-directory: packages/reader-helper
+        run: cargo build --release --locked
+      - name: Serve-mode smoke test and memory benchmark
+        # Skipped on Windows: the script measures memory with `ps`/`footprint`.
+        if: runner.os != 'Windows'
+        # Drives the real binary over its stdio protocol (page turns, trim). Not a pass/fail
+        # perf gate -- the numbers go in the log.
+        shell: bash
+        run: python3 scripts/benchmark-serve.py packages/reader-helper/target/release/fast-reader-helper*
+
+  plugin:
+    name: Plugin (typecheck + tests)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24   # unflagged TypeScript type-stripping, which `node --test` relies on
+          cache: npm
+          cache-dependency-path: packages/zotero-plugin/package-lock.json
+      - working-directory: packages/zotero-plugin
+        run: npm ci
+      - working-directory: packages/zotero-plugin
+        run: npm run typecheck
+      - working-directory: packages/zotero-plugin
+        run: npm test

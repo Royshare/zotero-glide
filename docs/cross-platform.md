@@ -75,32 +75,23 @@ unsupported in v0.1 and reported as an "unsupported platform" error (brief
   implemented for v0.1 -- a bare binary in `bin/linux-x64/` is what
   `scripts/build-helper.sh` produces today.
 
-## CI build matrix (not implemented, sketch only)
+## CI
 
-No CI is configured in this repository for v0.1 (see STATUS.md). If/when
-it is, the natural shape is a GitHub Actions matrix:
+`.github/workflows/ci.yml` (every push/PR): license headers + notices up to
+date; helper `cargo test` + build + the serve-mode benchmark on macOS arm64,
+macOS Intel (`macos-15-intel`), Windows and Ubuntu 22.04 (built on 22.04 so the
+binary's glibc requirement is as old as practical); plugin typecheck + unit
+tests on Node 24.
 
-```yaml
-strategy:
-  matrix:
-    include:
-      - os: macos-14        # arm64 runner
-        target: aarch64-apple-darwin
-        bin_dir: macos-arm64
-      - os: macos-13         # x64 runner
-        target: x86_64-apple-darwin
-        bin_dir: macos-x64
-      - os: windows-latest
-        target: x86_64-pc-windows-msvc
-        bin_dir: windows-x64
-      - os: ubuntu-latest
-        target: x86_64-unknown-linux-gnu
-        bin_dir: linux-x64
-```
+`.github/workflows/release.yml` (tag `vX.Y.Z`, which must equal the plugin's
+`package.json` version): builds the helper on all four platforms, assembles one
+`.xpi` containing all four binaries (`FAST_READER_SKIP_HELPER_BUILD=1` makes the
+npm `prebuild` hook use them instead of building the host's), builds the
+AGPL corresponding-source archive (`scripts/make-source-archive.sh`: project +
+`cargo vendor`, MuPDF included), and publishes the three files with SHA256SUMS.
 
-Each job would run `cargo build --release --target <target>` inside
-`packages/reader-helper`, then `cargo test` (the engine/cache/blit test
-suite is entirely headless and CI-safe -- it needs no display server,
-unlike anything that would try to drive the actual `winit` window). Signing
-steps (previous section) would run only on tagged-release builds, not on
-every PR, given their cost/complexity.
+**Honest status:** the scripts the workflows call were run locally on macOS
+arm64, but the workflows themselves have never run on GitHub. The Windows leg
+(MuPDF's MSBuild + bindgen/libclang on the runner) and the Intel macOS leg are
+the likeliest to need a first-run fix. Signing/notarization (above) is still not
+done, so release binaries will trigger Gatekeeper/SmartScreen warnings.

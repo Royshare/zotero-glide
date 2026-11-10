@@ -1,0 +1,102 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Zotero Fast Reader contributors
+#
+# Triggered by pushing a tag `vX.Y.Z` (which must equal packages/zotero-plugin/package.json's
+# version). Builds the helper on all four platforms, assembles ONE .xpi containing every
+# platform's binary, and publishes it with the AGPL "complete corresponding source" archive
+# and checksums.
+#
+# NOT YET DONE (documented in docs/cross-platform.md): macOS notarization and Windows signing.
+# Unsigned binaries trigger Gatekeeper / SmartScreen warnings on first run.
+#
+# Like ci.yml, this has not been run on GitHub; the individual scripts it calls were run locally.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write   # create the release
+
+env:
+  # Baked into the binaries (--version/--license) and into legal/SOURCE.md inside the .xpi,
+  # so every distributed binary names where its exact source is (AGPL-3.0 section 6).
+  FAST_READER_SOURCE_URL: ${{ github.server_url }}/${{ github.repository }}
+  FAST_READER_SOURCE_COMMIT: ${{ github.sha }}
+
+jobs:
+  helper:
+    name: Helper (${{ matrix.bin_dir }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - { os: macos-14,       bin_dir: macos-arm64,  exe: fast-reader-helper }
+          - { os: macos-15-intel, bin_dir: macos-x64,    exe: fast-reader-helper }
+          - { os: windows-latest, bin_dir: windows-x64,  exe: fast-reader-helper.exe }
+          - { os: ubuntu-22.04,   bin_dir: linux-x64,    exe: fast-reader-helper }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/reader-helper
+      - run: python3 scripts/gen_fixtures.py
+      - working-directory: packages/reader-helper
+        run: cargo test --release --locked
+      - working-directory: packages/reader-helper
+        run: cargo build --release --locked
+      - uses: actions/upload-artifact@v4
+        with:
+          name: helper-${{ matrix.bin_dir }}
+          path: packages/reader-helper/target/release/${{ matrix.exe }}
+          if-no-files-found: error
+
+  release:
+    needs: helper
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: packages/zotero-plugin/package-lock.json
+      - name: Tag matches the plugin version
+        run: |
+          v="$(node -p "require('./packages/zotero-plugin/package.json').version")"
+          [ "refs/tags/v$v" = "$GITHUB_REF" ] || { echo "tag $GITHUB_REF != v$v"; exit 1; }
+          echo "VERSION=$v" >> "$GITHUB_ENV"
+      - name: License material is current
+        run: |
+          python3 scripts/add-spdx.py --check
+          (cd packages/reader-helper && cargo fetch --locked)
+          python3 scripts/gen-third-party.py --check
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Put every platform's helper into the plugin
+        run: |
+          for d in macos-arm64 macos-x64 windows-x64 linux-x64; do
+            mkdir -p "packages/zotero-plugin/addon/bin/$d"
+            cp artifacts/helper-$d/* "packages/zotero-plugin/addon/bin/$d/"
+          done
+          chmod +x packages/zotero-plugin/addon/bin/*/fast-reader-helper
+      - name: Build the .xpi (helper already built per platform)
+        working-directory: packages/zotero-plugin
+        env:
+          FAST_READER_SKIP_HELPER_BUILD: "1"
+        run: |
+          npm ci
+          npm run build
+      - name: Corresponding-source archive (project + vendored dependencies incl. MuPDF)
+        run: scripts/make-source-archive.sh "$VERSION" "zotero-fast-reader-$VERSION-source.tar.gz"
+      - name: Checksums and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp packages/zotero-plugin/.scaffold/build/zotero-fast-reader.xpi "zotero-fast-reader-$VERSION.xpi"
+          sha256sum "zotero-fast-reader-$VERSION.xpi" "zotero-fast-reader-$VERSION-source.tar.gz" > SHA256SUMS
+          gh release create "v$VERSION" --generate-notes --title "Zotero Fast Reader $VERSION" \
+            "zotero-fast-reader-$VERSION.xpi" "zotero-fast-reader-$VERSION-source.tar.gz" SHA256SUMS
