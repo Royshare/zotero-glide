@@ -7,3 +7,4 @@ packages/zotero-plugin/addon/bin/*/fast-reader-helper.exe
 *.xpi
 node_modules/
 .DS_Store
+.openidea/
