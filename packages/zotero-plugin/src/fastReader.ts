@@ -253,7 +253,15 @@ class FastReaderPlugin {
   private _rootDirFromURI(): string {
     // Only valid for an unpacked (plain file://) install -- see the
     // isPacked branch in openInFastReader above.
-    return Zotero.File.pathToFile(this.rootURI!).path;
+    //
+    // Zotero.File.pathToFile() takes a filesystem *path*; on Zotero 11 it
+    // throws "Unexpected path value 'file:///...'" when handed the
+    // file:// rootURI (found live). The file protocol handler is the
+    // Gecko-standard URL -> nsIFile conversion and works on every version.
+    const handler = Services.io.getProtocolHandler("file") as unknown as {
+      QueryInterface(iid: unknown): { getFileFromURLSpec(spec: string): { path: string } };
+    };
+    return handler.QueryInterface(Ci.nsIFileProtocolHandler).getFileFromURLSpec(this.rootURI!).path;
   }
 
   private async _fetchBytes(url: string): Promise<Uint8Array> {
