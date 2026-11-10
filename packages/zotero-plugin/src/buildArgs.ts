@@ -65,3 +65,47 @@ export function buildHelperArgs(pdfPath: string, opts?: BuildHelperArgsOptions):
 
   return args;
 }
+
+/**
+ * argv for the headless in-tab mode: `--serve --frame-dir DIR --file PDF
+ * [--page N]` (see packages/reader-helper/src/main.rs). Like
+ * buildHelperArgs, always an array -- never a shell string.
+ */
+export function buildServeArgs(pdfPath: string, frameDir: string, page?: number): string[] {
+  if (typeof pdfPath !== "string" || pdfPath.length === 0) {
+    throw new TypeError("buildServeArgs: pdfPath must be a non-empty string");
+  }
+  if (typeof frameDir !== "string" || frameDir.length === 0) {
+    throw new TypeError("buildServeArgs: frameDir must be a non-empty string");
+  }
+  const args = ["--serve", "--frame-dir", frameDir, "--file", pdfPath];
+  if (page !== undefined) {
+    if (!Number.isInteger(page) || page < 1) {
+      throw new TypeError(`buildServeArgs: page must be a positive integer, got ${page}`);
+    }
+    args.push("--page", String(page));
+  }
+  return args;
+}
+
+/**
+ * Environment for the headless helper. The allocator only reads these at
+ * process start, so they must be set by the launcher. Both knobs make the
+ * allocator hand large freed buffers (page renders are 10-25 MB) back to the
+ * OS instead of keeping them resident. Measured with
+ * scripts/benchmark-serve.py:
+ *
+ * - macOS `MallocSpaceEfficient=1`: steady-state footprint of a text PDF
+ *   46 -> 24 MB; `trim` ends at ~3 MB instead of retaining the whole peak
+ *   (image-heavy scan: 272 -> 3 MB).
+ * - Linux (glibc 2.36, aarch64, in a container) `MALLOC_MMAP_THRESHOLD_=1048576`:
+ *   text PDF 71 -> 27 MB while reading, `trim` 8 -> 6 MB; scan `trim`
+ *   132 -> 10 MB.
+ *
+ * No measurable latency cost on either. Windows: not measured, nothing set.
+ */
+export function helperEnvironment(platform: string): Record<string, string> {
+  if (platform === "mac") return { MallocSpaceEfficient: "1" };
+  if (platform === "linux") return { MALLOC_MMAP_THRESHOLD_: "1048576" };
+  return {};
+}

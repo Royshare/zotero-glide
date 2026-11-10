@@ -33,30 +33,50 @@ import {
 } from "./errors.ts";
 import { resolveHelperPath } from "./resolveHelper.ts";
 import { resolveHelperPathPacked } from "./extractHelper.ts";
-import { resolvePdfAttachment, type PdfLikeItem } from "./pdfAttachment.ts";
+import { resolvePdfAttachment, tabTitleForItem, type PdfLikeItem } from "./pdfAttachment.ts";
 import { launchFastReader } from "./launchFastReader.ts";
-import type { DockGeometry } from "./buildArgs.ts";
+import { buildServeArgs, helperEnvironment, type DockGeometry } from "./buildArgs.ts";
+import type { HelperProcess } from "./helperConnection.ts";
+import { ReaderTab, TAB_TYPE, type ZoteroTabs } from "./readerTab.ts";
+import { withoutTabType, type SessionTab } from "./sessionState.ts";
 
 type LibraryMenuContext = _ZoteroTypes.MenuManager.LibraryMenuContext;
 
 /** Minimal shape of what Subprocess.sys.mjs's Subprocess.call() resolves to -- not covered by zotero-types (a generic Gecko module, not Zotero-specific). */
-interface SubprocessHandle {
+interface SubprocessHandle extends HelperProcess {
   pid: number;
-  wait(): Promise<{ exitCode: number }>;
 }
 
 interface SubprocessModule {
-  call(opts: { command: string; arguments: string[] }): Promise<SubprocessHandle>;
+  call(opts: {
+    command: string;
+    arguments: string[];
+    stderr?: "ignore" | "stdout" | "pipe";
+    environment?: Record<string, string>;
+    environmentAppend?: boolean;
+  }): Promise<SubprocessHandle>;
+}
+
+/** The bit of Zotero's main window this plugin touches for tabs. */
+interface TabsWindow {
+  Zotero_Tabs?: ZoteroTabs & { getState(): SessionTab[] };
+  document: Document;
 }
 
 const MENU_ID = "fast-reader-open";
+const MENU_ID_WINDOW = "fast-reader-open-window";
+const OBSERVER_ID = "fast-reader-tabs";
 
 class FastReaderPlugin {
   id: string | null = null;
   version: string | null = null;
   rootURI: string | null = null;
   menuID: string | false | null = null;
+  windowMenuID: string | false | null = null;
   private subprocessModule: SubprocessModule | null = null;
+  private readerTabs = new Set<ReaderTab>();
+  private originalGetState: (() => SessionTab[]) | null = null;
+  private notifierID: string | null = null;
 
   init({ id, version, rootURI }: { id: string; version: string; rootURI: string }): void {
     this.id = id;
@@ -66,17 +86,23 @@ class FastReaderPlugin {
 
   addToAllWindows(): void {
     this._registerMenu();
+    this._registerTabSupport(Zotero.getMainWindow() as unknown as TabsWindow | null);
   }
 
   removeFromAllWindows(): void {
     this._unregisterMenu();
+    this._unregisterTabSupport();
   }
 
   // Present for symmetry with the brief's onMainWindowLoad/Unload hooks;
   // Zotero.MenuManager registers globally (not per-window), so these are
   // no-ops today but kept as the seam bootstrap.js calls into, in case a
   // future Zotero version's MenuManager becomes per-window.
-  addToWindow(_window: Window): void {}
+  // The tab restore hook lives on the window's Zotero_Tabs, so it IS
+  // per-window: (re)register it whenever a main window loads.
+  addToWindow(window: Window): void {
+    this._registerTabSupport(window as unknown as TabsWindow);
+  }
   removeFromWindow(_window: Window): void {}
 
   private _registerMenu(): void {
@@ -84,39 +110,46 @@ class FastReaderPlugin {
       Zotero.debug("[fast-reader] Zotero.MenuManager unavailable; menu not registered");
       return;
     }
+    const entry = (label: string, open: (item: PdfLikeItem) => Promise<void>) => ({
+      menuType: "menuitem" as const,
+      // Zotero.MenuManager's item builder (_initMenu) only ever reads
+      // l10nID for display text -- a plain `label` field is accepted
+      // by registerMenu() (the MenuData type has no `label` at all)
+      // but silently never shown, leaving a blank menu entry.
+      // Confirmed by reading Zotero's own _initMenu source live.
+      // Rather than add a Fluent .ftl file + locale registration for
+      // one static string, set the XUL `label` attribute directly on
+      // the real menu element -- context.menuElem is exactly that
+      // element (see menuManager.js's _updateMenuEvents), and XUL
+      // menuitems have always read their display text from `label`
+      // regardless of whether Fluent or plain code set it. onShowing
+      // runs every time the popup is about to show, so this is safe
+      // to redo each time (idempotent, and cheap).
+      onShowing: async (_event: Event, context: LibraryMenuContext) => {
+        context.menuElem.setAttribute("label", label);
+        const item = context.items?.length === 1 ? context.items[0] : null;
+        const attachment = await resolvePdfAttachment(item as PdfLikeItem | null);
+        context.setVisible(!!attachment);
+      },
+      onCommand: async (_event: Event, context: LibraryMenuContext) => {
+        const item = context.items?.length === 1 ? context.items[0] : null;
+        if (!item) return;
+        await open(item as PdfLikeItem);
+      },
+    });
+    // Primary: a tab in Zotero's own tab bar. Secondary: the original
+    // standalone window (kept: it has the lowest possible coupling to Zotero).
     this.menuID = Zotero.MenuManager.registerMenu({
       menuID: MENU_ID,
       pluginID: this.id!,
       target: "main/library/item",
-      menus: [
-        {
-          menuType: "menuitem",
-          // Zotero.MenuManager's item builder (_initMenu) only ever reads
-          // l10nID for display text -- a plain `label` field is accepted
-          // by registerMenu() (the MenuData type has no `label` at all)
-          // but silently never shown, leaving a blank menu entry.
-          // Confirmed by reading Zotero's own _initMenu source live.
-          // Rather than add a Fluent .ftl file + locale registration for
-          // one static string, set the XUL `label` attribute directly on
-          // the real menu element -- context.menuElem is exactly that
-          // element (see menuManager.js's _updateMenuEvents), and XUL
-          // menuitems have always read their display text from `label`
-          // regardless of whether Fluent or plain code set it. onShowing
-          // runs every time the popup is about to show, so this is safe
-          // to redo each time (idempotent, and cheap).
-          onShowing: async (_event: Event, context: LibraryMenuContext) => {
-            context.menuElem.setAttribute("label", "Open in Fast Reader");
-            const item = context.items?.length === 1 ? context.items[0] : null;
-            const attachment = await resolvePdfAttachment(item as PdfLikeItem | null);
-            context.setVisible(!!attachment);
-          },
-          onCommand: async (_event: Event, context: LibraryMenuContext) => {
-            const item = context.items?.length === 1 ? context.items[0] : null;
-            if (!item) return;
-            await this.openInFastReader(item as PdfLikeItem);
-          },
-        },
-      ],
+      menus: [entry("Open in Fast Reader", (i) => this.openInTab(i))],
+    });
+    this.windowMenuID = Zotero.MenuManager.registerMenu({
+      menuID: MENU_ID_WINDOW,
+      pluginID: this.id!,
+      target: "main/library/item",
+      menus: [entry("Open in Fast Reader (separate window)", (i) => this.openInFastReader(i))],
     });
   }
 
@@ -124,7 +157,11 @@ class FastReaderPlugin {
     if (this.menuID && Zotero.MenuManager && typeof Zotero.MenuManager.unregisterMenu === "function") {
       Zotero.MenuManager.unregisterMenu(this.menuID);
     }
+    if (this.windowMenuID && Zotero.MenuManager && typeof Zotero.MenuManager.unregisterMenu === "function") {
+      Zotero.MenuManager.unregisterMenu(this.windowMenuID);
+    }
     this.menuID = null;
+    this.windowMenuID = null;
   }
 
   private _hostPlatform(): string {
@@ -182,48 +219,206 @@ class FastReaderPlugin {
     return proc;
   }
 
+  /**
+   * Resolves (and, for a packed install, extracts) the helper binary.
+   */
+  private _resolveHelper(): Promise<string> {
+      const isPacked = this.rootURI!.startsWith("jar:");
+    // A real "Install Plugin From File" install keeps the .xpi packed
+    // (rootURI is jar:file:///.../fast-reader@....xpi!/); the dev
+    // workflow (zotero-plugin-scaffold's `serve`) installs it unpacked
+    // to a real directory. loadSubScript handles both transparently
+    // for *script* loading, which is why only the helper-binary path
+    // (which needs a real executable on disk, not a resource inside a
+    // zip) needs this branch at all -- see extractHelper.ts.
+    const resolveHelper = isPacked
+      ? () =>
+          resolveHelperPathPacked({
+            platform: this._hostPlatform(),
+            arch: Zotero.arch,
+            rootURI: this.rootURI!,
+            destDir: PathUtils.join(Zotero.DataDirectory.dir, "fast-reader-helper-bin", this.version!),
+            pathJoin: (...parts: string[]) => PathUtils.join(...parts),
+            fetchBytes: (url: string) => this._fetchBytes(url),
+            writeBytes: (p: string, bytes: Uint8Array) => IOUtils.write(p, bytes),
+            // IOUtils.setPermissions wants a numeric mode, not a
+            // string -- "755" is silently misinterpreted (confirmed
+            // live: it does not produce rwxr-xr-x), 0o755 does.
+            setExecutable: (p: string) => IOUtils.setPermissions(p, 0o755),
+          })
+      : () =>
+          resolveHelperPath({
+            rootDir: this._rootDirFromURI(),
+            platform: this._hostPlatform(),
+            arch: Zotero.arch,
+            pathJoin: (...parts: string[]) => PathUtils.join(...parts),
+            fileExists: (p: string) => this._fileExists(p),
+          });
+
+    return resolveHelper();
+  }
+
   async openInFastReader(item: PdfLikeItem): Promise<void> {
     try {
-      const isPacked = this.rootURI!.startsWith("jar:");
-      // A real "Install Plugin From File" install keeps the .xpi packed
-      // (rootURI is jar:file:///.../fast-reader@....xpi!/); the dev
-      // workflow (zotero-plugin-scaffold's `serve`) installs it unpacked
-      // to a real directory. loadSubScript handles both transparently
-      // for *script* loading, which is why only the helper-binary path
-      // (which needs a real executable on disk, not a resource inside a
-      // zip) needs this branch at all -- see extractHelper.ts.
-      const resolveHelper = isPacked
-        ? () =>
-            resolveHelperPathPacked({
-              platform: this._hostPlatform(),
-              arch: Zotero.arch,
-              rootURI: this.rootURI!,
-              destDir: PathUtils.join(Zotero.DataDirectory.dir, "fast-reader-helper-bin", this.version!),
-              pathJoin: (...parts: string[]) => PathUtils.join(...parts),
-              fetchBytes: (url: string) => this._fetchBytes(url),
-              writeBytes: (p: string, bytes: Uint8Array) => IOUtils.write(p, bytes),
-              // IOUtils.setPermissions wants a numeric mode, not a
-              // string -- "755" is silently misinterpreted (confirmed
-              // live: it does not produce rwxr-xr-x), 0o755 does.
-              setExecutable: (p: string) => IOUtils.setPermissions(p, 0o755),
-            })
-        : () =>
-            resolveHelperPath({
-              rootDir: this._rootDirFromURI(),
-              platform: this._hostPlatform(),
-              arch: Zotero.arch,
-              pathJoin: (...parts: string[]) => PathUtils.join(...parts),
-              fileExists: (p: string) => this._fileExists(p),
-            });
-
       await launchFastReader(item, {
-        resolveHelperPath: resolveHelper,
+        resolveHelperPath: () => this._resolveHelper(),
         spawn: (command: string, args: string[]) => this._spawn(command, args),
         dock: this._dockGeometry(),
       });
     } catch (error) {
       this._showLaunchError(error);
     }
+  }
+
+  /**
+   * Opens the PDF as a tab in Zotero's own tab bar (the default action).
+   * Spawns a per-tab headless helper (`--serve`); closing the tab ends it.
+   * Re-opening a PDF that already has a reader tab just selects that tab.
+   */
+  async openInTab(item: PdfLikeItem): Promise<void> {
+    let proc: SubprocessHandle | null = null;
+    let frameDir: string | null = null;
+    try {
+      const win = Zotero.getMainWindow() as unknown as TabsWindow | null;
+      const tabs = win?.Zotero_Tabs;
+      if (!win || !tabs) {
+        throw new FastReaderError("Zotero's tab bar is not available in this window.");
+      }
+      const attachment = await resolvePdfAttachment(item);
+      const pdfPath = attachment && typeof attachment.getFilePathAsync === "function" ? await attachment.getFilePathAsync() : null;
+      if (!attachment || !pdfPath) {
+        throw new AttachmentMissingError(item?.key ?? "(unknown item)");
+      }
+
+      for (const open of this.readerTabs) {
+        if (open.pdfPath === pdfPath) {
+          open.select();
+          return;
+        }
+      }
+
+      const helperPath = await this._resolveHelper();
+      frameDir = PathUtils.join(PathUtils.tempDir, `zotero-fast-reader-${Zotero.Utilities.randomString(10)}`);
+      try {
+        proc = await this._subprocess().call({
+          command: helperPath,
+          arguments: buildServeArgs(pdfPath, frameDir),
+          // helper's own error text (e.g. "failed to open document") arrives
+          // on stdout as non-JSON lines and is shown if the tab dies early
+          stderr: "stdout",
+          // allocator tuning that keeps an idle/backgrounded tab small -- see buildArgs.ts
+          environment: helperEnvironment(this._hostPlatform()),
+          environmentAppend: true,
+        });
+      } catch (cause) {
+        throw new SpawnError(helperPath, cause);
+      }
+
+      const tab = new ReaderTab({
+        tabs,
+        doc: win.document,
+        isMac: !!Zotero.isMac,
+        title: tabTitleForItem(attachment, pdfPath),
+        pdfPath,
+        frameDir,
+        proc,
+        readFile: (path) => IOUtils.read(path),
+        removeFile: (path) => IOUtils.remove(path, { ignoreAbsent: true }),
+        removeDir: (path) => IOUtils.remove(path, { recursive: true, ignoreAbsent: true }),
+        setTimeout: (fn, ms) => setTimeout(fn, ms) as unknown as number,
+        clearTimeout: (id) => clearTimeout(id as never),
+        debug: (msg) => Zotero.debug(msg),
+        collectGarbage: () => {
+          try {
+            (win as unknown as { windowUtils: { garbageCollect(): void } }).windowUtils.garbageCollect();
+          } catch (e) {
+            Zotero.debug(`[fast-reader] garbageCollect failed: ${e}`);
+          }
+        },
+        onClosed: (closed) => {
+          this.readerTabs.delete(closed);
+        },
+      });
+      this.readerTabs.add(tab);
+    } catch (error) {
+      if (proc) {
+        try {
+          await proc.kill(0);
+        } catch {
+          /* already gone */
+        }
+      }
+      if (frameDir) {
+        IOUtils.remove(frameDir, { recursive: true, ignoreAbsent: true }).catch(() => {});
+      }
+      this._showLaunchError(error);
+    }
+  }
+
+  private _subprocess(): SubprocessModule {
+    if (!this.subprocessModule) {
+      const mod: { Subprocess: SubprocessModule } = {} as { Subprocess: SubprocessModule };
+      ChromeUtils.defineESModuleGetters(mod, {
+        Subprocess: "resource://gre/modules/Subprocess.sys.mjs",
+      });
+      this.subprocessModule = mod.Subprocess;
+    }
+    return this.subprocessModule;
+  }
+
+  /**
+   * Keeps reader tabs out of Zotero's saved session. Zotero persists every
+   * tab and on the next start calls `tabHooks.restoreState[type]` for each;
+   * with no hook for our type it destructures `undefined` and *aborts
+   * restoring all tabs* -- including ordinary PDF.js reader tabs (found
+   * live on Zotero 10.0.8: TypeError at tabs.js:611). A hook registered by
+   * the plugin is not a fix: the plugin can start after the pane has
+   * already restored (verified: the error still occurred with the hook
+   * present). So `getState()` is wrapped to never save our tabs -- a reader
+   * tab is a live helper process, not a document; there is nothing to
+   * restore -- and the no-op hook stays only as a last resort. See
+   * sessionState.ts.
+   *
+   * Known limit: a session file already containing a `fastreader` tab (only
+   * possible from a development build of this feature) is not repaired by
+   * the plugin; delete the tab entry from the profile's session.json.
+   */
+  private _registerTabSupport(win: TabsWindow | null | undefined): void {
+    const tabs = win?.Zotero_Tabs;
+    if (tabs && !this.originalGetState) {
+      const original = tabs.getState.bind(tabs);
+      this.originalGetState = original;
+      tabs.getState = () => withoutTabType(original(), TAB_TYPE);
+    }
+    if (tabs?.tabHooks?.restoreState) {
+      tabs.tabHooks.restoreState[TAB_TYPE] = async () => ({ itemID: null });
+    }
+    if (!this.notifierID && Zotero.Notifier?.registerObserver) {
+      // Selecting another tab backgrounds our reader tabs (frees their memory).
+      this.notifierID = Zotero.Notifier.registerObserver(
+        {
+          notify: async (event: string, type: string, ids: Array<string | number>) => {
+            if (type !== "tab" || event !== "select") return;
+            for (const tab of this.readerTabs) tab.setActive(ids.includes(tab.tabID));
+          },
+        },
+        ["tab"],
+        OBSERVER_ID
+      );
+    }
+  }
+
+  private _unregisterTabSupport(): void {
+    const tabs = (Zotero.getMainWindow() as unknown as TabsWindow | null)?.Zotero_Tabs;
+    if (tabs?.tabHooks?.restoreState) delete tabs.tabHooks.restoreState[TAB_TYPE];
+    if (tabs && this.originalGetState) tabs.getState = this.originalGetState;
+    this.originalGetState = null;
+    if (this.notifierID) {
+      Zotero.Notifier.unregisterObserver(this.notifierID);
+      this.notifierID = null;
+    }
+    for (const tab of Array.from(this.readerTabs)) tab.close();
+    this.readerTabs.clear();
   }
 
   /**

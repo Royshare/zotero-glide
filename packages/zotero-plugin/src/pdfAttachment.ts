@@ -21,6 +21,10 @@ export interface PdfLikeItem {
   isRegularItem?: () => boolean;
   getBestAttachment?: () => Promise<PdfLikeItem | null | undefined | false>;
   getFilePathAsync?: () => Promise<string | false>;
+  /** Used only to title the reader tab. */
+  parentItem?: { getDisplayTitle?: () => string } | null;
+  getDisplayTitle?: () => string;
+  attachmentFilename?: string;
 }
 
 /**
@@ -72,4 +76,20 @@ export async function getPdfPathForItem(item: PdfLikeItem | null | undefined): P
   }
   const path = await attachment.getFilePathAsync();
   return path || null;
+}
+
+/**
+ * A human title for a reader tab: the parent item's title (what Zotero's
+ * own reader tabs show), else the attachment's, else its file name, else
+ * the PDF path's basename.
+ */
+export function tabTitleForItem(attachment: PdfLikeItem | null | undefined, pdfPath: string): string {
+  const clean = (t: unknown) => (typeof t === "string" ? t.replace(/[\u0000-\u001F\u007F-\u009F]/g, "").trim() : "");
+  const fromParent = clean(attachment?.parentItem?.getDisplayTitle?.());
+  if (fromParent) return fromParent;
+  const own = clean(attachment?.getDisplayTitle?.());
+  if (own) return own;
+  const fileName = clean(attachment?.attachmentFilename);
+  if (fileName) return fileName;
+  return clean(pdfPath.split(/[\\/]/).pop()) || "PDF";
 }

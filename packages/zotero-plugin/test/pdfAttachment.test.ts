@@ -117,3 +117,17 @@ test("getPdfPathForItem: null when the attachment file is missing on disk", asyn
 test("getPdfPathForItem: null when there is no PDF attachment to resolve", async () => {
   assert.equal(await getPdfPathForItem(regularItemWithoutAttachment()), null);
 });
+
+import { tabTitleForItem } from "../src/pdfAttachment.ts";
+
+test("tabTitleForItem prefers the parent title, then own title, then filename, then path basename", () => {
+  assert.equal(tabTitleForItem({ parentItem: { getDisplayTitle: () => "Parent Paper" }, getDisplayTitle: () => "PDF" }, "/x/a.pdf"), "Parent Paper");
+  assert.equal(tabTitleForItem({ getDisplayTitle: () => "Own Title" }, "/x/a.pdf"), "Own Title");
+  assert.equal(tabTitleForItem({ attachmentFilename: "file.pdf" }, "/x/a.pdf"), "file.pdf");
+  assert.equal(tabTitleForItem({}, "/x/y/a.pdf"), "a.pdf");
+  assert.equal(tabTitleForItem(null, "C:\\docs\\b.pdf"), "b.pdf");
+});
+
+test("tabTitleForItem strips control characters (they break Zotero's tab DOM)", () => {
+  assert.equal(tabTitleForItem({ getDisplayTitle: () => "A\u0001B\n" }, "/x.pdf"), "AB");
+});
