@@ -2,6 +2,7 @@ use fast_reader_helper::app::{App, DockGeometry};
 use fast_reader_helper::engine::mupdf_engine::MuPdfDocumentEngine;
 use fast_reader_helper::engine::DocumentEngine;
 use fast_reader_helper::log;
+use fast_reader_helper::serve::{self, Server};
 use fast_reader_helper::state::ReaderState;
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -12,17 +13,21 @@ struct Args {
     file: PathBuf,
     page: u32,
     dock: Option<DockGeometry>,
+    /// `--serve --frame-dir DIR`: headless mode for the in-tab reader (see serve.rs).
+    serve_frame_dir: Option<PathBuf>,
 }
 
 fn parse_args(argv: &[String]) -> Result<Args, String> {
     if argv.is_empty() {
-        return Err("usage: fast-reader-helper <pdf-path> [--page N] [--dock-x X --dock-y Y --dock-height H]\n   or: fast-reader-helper --file <pdf-path> [--page N] [--dock-x X --dock-y Y --dock-height H]".into());
+        return Err("usage: fast-reader-helper <pdf-path> [--page N] [--dock-x X --dock-y Y --dock-height H]\n   or: fast-reader-helper --serve --frame-dir <dir> --file <pdf-path> [--page N]   (headless, JSON over stdio)\n   or: fast-reader-helper --file <pdf-path> [--page N] [--dock-x X --dock-y Y --dock-height H]".into());
     }
     let mut file: Option<PathBuf> = None;
     let mut page: u32 = 1;
     let mut dock_x: Option<i32> = None;
     let mut dock_y: Option<i32> = None;
     let mut dock_height: Option<u32> = None;
+    let mut serve = false;
+    let mut frame_dir: Option<PathBuf> = None;
     let mut i = 0;
     while i < argv.len() {
         match argv[i].as_str() {
@@ -57,6 +62,12 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
                 dock_height =
                     Some(v.parse::<u32>().map_err(|_| format!("invalid --dock-height value: {v}"))?);
             }
+            "--serve" => serve = true,
+            "--frame-dir" => {
+                i += 1;
+                let v = argv.get(i).ok_or("--frame-dir requires a value")?;
+                frame_dir = Some(PathBuf::from(v));
+            }
             other if file.is_none() && !other.starts_with("--") => {
                 file = Some(PathBuf::from(other));
             }
@@ -70,10 +81,20 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
         (None, None, None) => None,
         _ => return Err("--dock-x, --dock-y, and --dock-height must all be given together".into()),
     };
+    let serve_frame_dir = match (serve, frame_dir) {
+        (true, Some(d)) => Some(d),
+        (true, None) => return Err("--serve requires --frame-dir".into()),
+        (false, Some(_)) => return Err("--frame-dir only makes sense with --serve".into()),
+        (false, None) => None,
+    };
+    if serve_frame_dir.is_some() && dock.is_some() {
+        return Err("--dock-* has no meaning with --serve (there is no window)".into());
+    }
     Ok(Args {
         file,
         page: page.saturating_sub(1),
         dock,
+        serve_frame_dir,
     })
 }
 
@@ -100,6 +121,19 @@ fn main() -> ExitCode {
 
     let mut state = ReaderState::new(args.file.clone(), engine.page_count());
     state.goto_page(args.page);
+
+    if let Some(frame_dir) = args.serve_frame_dir {
+        let server = Server::new(engine, state, frame_dir);
+        let stdin = std::io::stdin();
+        let mut stdout = std::io::stdout().lock();
+        return match serve::run(server, std::io::BufReader::new(stdin), &mut stdout) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("[fast-reader] serve error: {e}");
+                ExitCode::from(1)
+            }
+        };
+    }
 
     let event_loop = match EventLoop::new() {
         Ok(el) => el,
@@ -187,6 +221,23 @@ mod tests {
         ]))
         .unwrap_err();
         assert!(err.contains("invalid --dock-x value"), "got: {err}");
+    }
+
+    #[test]
+    fn serve_mode_needs_a_frame_dir_and_vice_versa() {
+        let args = parse_args(&argv(&["--serve", "--frame-dir", "/tmp/f", "--file", "a.pdf"])).unwrap();
+        assert_eq!(args.serve_frame_dir, Some(PathBuf::from("/tmp/f")));
+        assert!(parse_args(&argv(&["--serve", "a.pdf"])).unwrap_err().contains("requires --frame-dir"));
+        assert!(parse_args(&argv(&["--frame-dir", "/tmp/f", "a.pdf"])).unwrap_err().contains("only makes sense"));
+    }
+
+    #[test]
+    fn serve_mode_rejects_dock_args() {
+        let err = parse_args(&argv(&[
+            "--serve", "--frame-dir", "/tmp/f", "a.pdf", "--dock-x", "1", "--dock-y", "2", "--dock-height", "3",
+        ]))
+        .unwrap_err();
+        assert!(err.contains("no meaning with --serve"), "got: {err}");
     }
 
     #[test]

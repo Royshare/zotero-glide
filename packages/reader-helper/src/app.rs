@@ -290,16 +290,8 @@ fn blit_centered(
                 break;
             }
             let (pr, pg, pb, a) = (page.rgba[i], page.rgba[i + 1], page.rgba[i + 2], page.rgba[i + 3]);
-            // MuPDF renders with premultiplied alpha, and clears unpainted
-            // page area to fully transparent (0,0,0,0) -- not white --
-            // when alpha=true (confirmed in fz_new_pixmap_from_display_list:
-            // `if (alpha) fz_clear_pixmap(...)` zeroes everything). A page
-            // is always opaque paper, so composite against white here:
-            // premultiplied-over-white simplifies to `channel + (255 - a)`.
-            let inv_a = 255 - a as u32;
-            let r = (pr as u32 + inv_a).min(255) as u8;
-            let g = (pg as u32 + inv_a).min(255) as u8;
-            let b = (pb as u32 + inv_a).min(255) as u8;
+            // Premultiplied RGBA -> composite over white; see frame.rs.
+            let (r, g, b) = crate::frame::over_white(pr, pg, pb, a);
             dst[dst_row + x as usize] = ((r as u32) << 16) | ((g as u32) << 8) | b as u32;
         }
     }
