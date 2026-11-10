@@ -27,10 +27,17 @@ pub struct ReaderSession<E: DocumentEngine> {
 
 impl<E: DocumentEngine> ReaderSession<E> {
     pub fn new(engine: E, state: ReaderState) -> Self {
+        Self::with_cache_radius(engine, state, CACHE_RADIUS)
+    }
+
+    /// `radius` 0 keeps only the current page rendered (no neighbor
+    /// prefetch). The in-tab reader uses this: it pays for the page it
+    /// shows and holds nothing else, which is the point of the project.
+    pub fn with_cache_radius(engine: E, state: ReaderState, radius: u32) -> Self {
         Self {
             engine,
             state,
-            cache: RenderCache::new(CACHE_RADIUS, SCALE_BUCKET),
+            cache: RenderCache::new(radius, SCALE_BUCKET),
             search_hits: Vec::new(),
             search_hit_index: 0,
         }
@@ -107,6 +114,14 @@ impl<E: DocumentEngine> ReaderSession<E> {
         self.state.zoom_mode = ZoomMode::Fixed;
         self.state.zoom_scale = (current * factor).clamp(MIN_SCALE, MAX_SCALE);
         self.invalidate_scale(window_px);
+    }
+
+    /// Drops every cached render and parsed display list, and lets the engine
+    /// release the open document too (it re-opens lazily). A backgrounded
+    /// reader tab calls this so it holds ~no page memory until shown again.
+    pub fn trim(&mut self) {
+        self.cache.clear();
+        self.engine.release_caches();
     }
 
     pub fn invalidate_scale(&mut self, window_px: (u32, u32)) {

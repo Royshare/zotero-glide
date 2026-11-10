@@ -74,12 +74,17 @@ pub trait DocumentEngine: Sized {
     fn search(&self, query: &str) -> Result<Vec<SearchHit>, EngineError>;
     fn extract_text(&self, page: u32) -> Result<String, EngineError>;
     fn close(&mut self);
+    /// Drops any internal caches (parsed display lists) without closing the
+    /// document. Used when a reader tab goes to the background.
+    fn release_caches(&mut self) {}
 }
 
 pub mod mupdf_engine {
     use super::*;
     use mupdf::{DisplayList, Document, Matrix};
+    use std::cell::RefCell;
     use std::collections::HashMap;
+    use std::path::PathBuf;
 
     /// How many parsed display lists to keep around. Matches the reader's
     /// render-cache radius (current page +/- 1) -- see docs/adr and
@@ -88,17 +93,38 @@ pub mod mupdf_engine {
 
     #[derive(Debug)]
     pub struct MuPdfDocumentEngine {
-        doc: Option<Document>,
+        path: PathBuf,
+        /// `None` while released (see `release_caches`) -- re-opened lazily by
+        /// `with_doc` on next use. Interior mutability so `&self` queries
+        /// (`page_size`, `search`) can transparently re-open.
+        doc: RefCell<Option<Document>>,
+        /// Set by `close()`; unlike a release, this is permanent.
+        closed: bool,
         page_count: u32,
         display_lists: HashMap<u32, DisplayList>,
         display_list_order: Vec<u32>,
     }
 
     impl MuPdfDocumentEngine {
-        fn require_doc(&self) -> Result<&Document, EngineError> {
-            self.doc
-                .as_ref()
-                .ok_or_else(|| EngineError::Other("document already closed".into()))
+        fn open_document(path: &Path) -> Result<Document, EngineError> {
+            let path_str = path
+                .to_str()
+                .ok_or_else(|| EngineError::OpenFailed("path is not valid UTF-8".into()))?;
+            Document::open(path_str).map_err(|e| EngineError::OpenFailed(e.to_string()))
+        }
+
+        /// Runs `f` with the open document, re-opening it first if a
+        /// `release_caches()` dropped it.
+        fn with_doc<T>(&self, f: impl FnOnce(&Document) -> Result<T, EngineError>) -> Result<T, EngineError> {
+            if self.closed {
+                return Err(EngineError::Other("document already closed".into()));
+            }
+            let mut slot = self.doc.borrow_mut();
+            if slot.is_none() {
+                log::debug("re-opening released document");
+                *slot = Some(Self::open_document(&self.path)?);
+            }
+            f(slot.as_ref().unwrap())
         }
 
         fn check_bounds(&self, page: u32) -> Result<(), EngineError> {
@@ -113,16 +139,13 @@ pub mod mupdf_engine {
         /// Evicts the oldest entry when the bounded cache is full.
         fn display_list_for(&mut self, page: u32) -> Result<&DisplayList, EngineError> {
             if !self.display_lists.contains_key(&page) {
-                let doc = self
-                    .doc
-                    .as_ref()
-                    .ok_or_else(|| EngineError::Other("document already closed".into()))?;
-                let p = doc
-                    .load_page(page as i32)
-                    .map_err(|e| EngineError::Other(e.to_string()))?;
-                let list = p
-                    .to_display_list(true)
-                    .map_err(|e| EngineError::Other(e.to_string()))?;
+                let list = self.with_doc(|doc| {
+                    let p = doc
+                        .load_page(page as i32)
+                        .map_err(|e| EngineError::Other(e.to_string()))?;
+                    p.to_display_list(true)
+                        .map_err(|e| EngineError::Other(e.to_string()))
+                })?;
                 if self.display_list_order.len() >= DISPLAY_LIST_CACHE_SIZE {
                     let evict = self.display_list_order.remove(0);
                     self.display_lists.remove(&evict);
@@ -143,11 +166,7 @@ pub mod mupdf_engine {
             if !path.exists() {
                 return Err(EngineError::FileNotFound(path.display().to_string()));
             }
-            let path_str = path
-                .to_str()
-                .ok_or_else(|| EngineError::OpenFailed("path is not valid UTF-8".into()))?;
-            let doc = Document::open(path_str)
-                .map_err(|e| EngineError::OpenFailed(e.to_string()))?;
+            let doc = Self::open_document(path)?;
             let page_count = doc
                 .page_count()
                 .map_err(|e| EngineError::OpenFailed(e.to_string()))?;
@@ -155,7 +174,9 @@ pub mod mupdf_engine {
                 return Err(EngineError::OpenFailed("document has no pages".into()));
             }
             Ok(Self {
-                doc: Some(doc),
+                path: path.to_path_buf(),
+                doc: RefCell::new(Some(doc)),
+                closed: false,
                 page_count: page_count as u32,
                 display_lists: HashMap::new(),
                 display_list_order: Vec::new(),
@@ -168,14 +189,15 @@ pub mod mupdf_engine {
 
         fn page_size(&self, page: u32) -> Result<PageSize, EngineError> {
             self.check_bounds(page)?;
-            let doc = self.require_doc()?;
-            let p = doc
-                .load_page(page as i32)
-                .map_err(|e| EngineError::Other(e.to_string()))?;
-            let b = p.bounds().map_err(|e| EngineError::Other(e.to_string()))?;
-            Ok(PageSize {
-                width: b.width(),
-                height: b.height(),
+            self.with_doc(|doc| {
+                let p = doc
+                    .load_page(page as i32)
+                    .map_err(|e| EngineError::Other(e.to_string()))?;
+                let b = p.bounds().map_err(|e| EngineError::Other(e.to_string()))?;
+                Ok(PageSize {
+                    width: b.width(),
+                    height: b.height(),
+                })
             })
         }
 
@@ -200,7 +222,7 @@ pub mod mupdf_engine {
             if query.trim().is_empty() {
                 return Ok(Vec::new());
             }
-            let doc = self.require_doc()?;
+            self.with_doc(|doc| {
             let mut hits = Vec::new();
             for page_no in 0..self.page_count {
                 let p = doc
@@ -226,22 +248,36 @@ pub mod mupdf_engine {
                 }
             }
             Ok(hits)
+            })
         }
 
         fn extract_text(&self, page: u32) -> Result<String, EngineError> {
             self.check_bounds(page)?;
-            let doc = self.require_doc()?;
-            let p = doc
-                .load_page(page as i32)
-                .map_err(|e| EngineError::Other(e.to_string()))?;
-            p.text(mupdf::TextExtractOptions::default())
-                .map_err(|e| EngineError::Other(e.to_string()))
+            self.with_doc(|doc| {
+                let p = doc
+                    .load_page(page as i32)
+                    .map_err(|e| EngineError::Other(e.to_string()))?;
+                p.text(mupdf::TextExtractOptions::default())
+                    .map_err(|e| EngineError::Other(e.to_string()))
+            })
+        }
+
+        /// Also drops the open `Document`: MuPDF keeps decoded images/fonts
+        /// in an internal store (up to 256 MB) that the safe API can't flush
+        /// directly, but dropping the document evicts everything keyed to
+        /// it (measured on the image-heavy fixture: see STATUS.md). The
+        /// next query re-opens it lazily.
+        fn release_caches(&mut self) {
+            self.display_lists.clear();
+            self.display_list_order.clear();
+            *self.doc.borrow_mut() = None;
         }
 
         fn close(&mut self) {
             self.display_lists.clear();
             self.display_list_order.clear();
-            self.doc = None;
+            *self.doc.borrow_mut() = None;
+            self.closed = true;
         }
     }
 }
@@ -340,6 +376,29 @@ mod tests {
         let engine = MuPdfDocumentEngine::open(&fixture("sample.pdf")).unwrap();
         let text = engine.extract_text(0).unwrap();
         assert!(text.contains("Fast Reader Test Fixture") || text.contains("page"));
+    }
+
+    #[test]
+    fn release_caches_drops_the_document_but_queries_transparently_reopen_it() {
+        let mut engine = MuPdfDocumentEngine::open(&fixture("sample.pdf")).unwrap();
+        let before = engine.render(0, 1.0).unwrap();
+        engine.release_caches();
+        // every query kind works after a release
+        assert!(engine.page_size(0).is_ok());
+        assert!(!engine.search("brown fox").unwrap().is_empty());
+        assert!(!engine.extract_text(0).unwrap().is_empty());
+        let after = engine.render(0, 1.0).unwrap();
+        assert_eq!((before.width, before.height), (after.width, after.height));
+        assert_eq!(before.rgba, after.rgba, "a re-opened document must render identically");
+    }
+
+    #[test]
+    fn close_is_permanent_even_after_a_release() {
+        let mut engine = MuPdfDocumentEngine::open(&fixture("sample.pdf")).unwrap();
+        engine.release_caches();
+        engine.close();
+        assert!(engine.page_size(0).is_err());
+        assert!(engine.render(0, 1.0).is_err());
     }
 
     #[test]
