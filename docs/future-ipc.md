@@ -1,5 +1,11 @@
 # Future IPC: Zotero ↔ Fast Reader
 
+**Update (v0.3):** a stdin/stdout JSON-lines protocol now exists for the
+in-tab reader (`packages/reader-helper/src/serve.rs`, ADR 002), and it is
+exactly the transport this document recommends -- no localhost server. The
+rest of this document (selection/annotation bridge, hand-back to Zotero's
+reader) is still design only.
+
 **Not implemented in v0.1.** This documents a plausible shape for later,
 per §11 of the project brief -- "design, but do NOT implement." v0.1's IPC
 surface stops at: plugin resolves a helper binary path, spawns it with an

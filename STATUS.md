@@ -2,13 +2,173 @@
 
 ## Current milestone
 
-v0.1's milestones are done (Milestone 3's plugin loading/launching is
+v0.3 (the reader as a Zotero tab) is implemented and verified live -- see the
+"v0.3" section below for exactly what was and wasn't checked. v0.1's milestones are done (Milestone 3's plugin loading/launching is
 confirmed end-to-end, including bugs a real user's install surfaced that
 earlier dev-mode testing hadn't -- see below). Now in v0.2, two pieces
 landed so far: the plugin's TypeScript migration, and docked-window UX
 (window position/size only -- process isolation unchanged). See
 `docs/adr/001-reader-helper-stack.md` and this file's "v0.2" section
 below for what's next.
+
+## v0.3: the reader is now a Zotero tab
+
+"Open in Fast Reader" opens the PDF as a tab in Zotero's own tab bar. Design
+and rejected alternatives: [`docs/adr/002-in-tab-reader.md`](docs/adr/002-in-tab-reader.md).
+In short: `fast-reader-helper --serve` is a headless per-tab render server
+(JSON commands on stdin, whole-page RGBA frames written to files); the plugin
+paints them on a `<canvas>` inside a real `Zotero_Tabs` tab. The old window is
+kept as "Open in Fast Reader (separate window)".
+
+**Verified live** against the isolated dev profile (`Zotero 2.app`, version
+11.0-beta.3, driven over RDP; the user's own Zotero was never touched):
+- the tab appears in the tab bar (`fastreader:<title>`), canvas is 2068x2677 on
+  a dpr-2 display, page content read back from the canvas is the right page,
+  white background, correct text;
+- real DOM key events: next/prev, Home/End, `+`, fit width/page, go-to-page;
+  search finds hits across pages and draws highlights; Enter cycles pages;
+- selecting another tab: canvas drops to 0x0 and the helper's footprint falls
+  to ~3 MB after 2 s; reselecting re-renders the same page;
+- re-opening an already-open PDF selects the existing tab (no second process);
+- closing the tab (and reloading the plugin) ends the helper and deletes its
+  frame directory -- 0 helper processes remain;
+- a corrupt PDF shows the helper's own error text in the tab instead of a
+  blank page; both context-menu entries register.
+
+**Memory/latency (`python3 scripts/benchmark-serve.py`, macOS arm64, retina-size
+viewport, helper only -- see "what this does not measure" below):**
+
+| fixture | first frame | page turn p50 / p95 | footprint, reading | after `trim` |
+|---|---|---|---|---|
+| paper-a (24pp, vector) | ~15 ms | 12 / 20 ms | 24 MB | 3 MB |
+| book-b (220pp, 100 turns) | ~20 ms | 13 / 25 ms | 25 MB (flat) | 3 MB |
+| scanned-c (40pp, JPEG pages) | ~50 ms | 43 / 56 ms | up to 272 MB | 3 MB |
+
+Real numbers behind three design decisions (each found by measuring, each
+confirmed by a before/after):
+1. *Keep only the current page in serve mode.* With the window's page±1
+   prefetch the helper also rendered two neighbors before it could answer, and
+   held 3 page buffers (10-25 MB each at retina size). Footprint after a short
+   read: 201 MB -> 74 MB with radius 0 plus streaming the frame to disk in
+   chunks instead of copying the whole page.
+2. *`MallocSpaceEfficient=1` on macOS* (the plugin sets it; libmalloc only
+   reads it at process start). `vmmap` showed the rest was not live data:
+   "Malloc Large (empty)", i.e. freed page buffers the allocator keeps
+   resident. With the knob: steady state 46 -> 24 MB, trim 272 MB -> 3 MB on
+   the scan, no latency change. A custom mmap allocator and
+   `malloc_zone_pressure_relief` were both tried first; neither beat the knob
+   (the former matched it, the latter did nothing) so both were removed.
+3. *`trim` drops the open document too, not just the page cache.* The engine
+   re-opens lazily on the next query (tested: identical render before/after).
+
+The scan's ~270 MB while reading is MuPDF's live internal image store (the
+same effect `docs/benchmark-methodology.md` documents for the window); it
+is reclaimed when the tab is backgrounded or closed, not while reading it.
+
+### v0.3 follow-up verification
+
+Run against **Zotero 10.0.8** (the version in `/Applications/Zotero.app`, i.e. the
+real target), in a fresh isolated profile and data dir -- the user's own
+library and profile were never opened. (The earlier checks above used a
+Zotero 11.0 beta; the manifest's `strict_max_version` is `10.*`, so 11 only
+works as a temporary/dev install, not a real one.)
+
+**Packed `.xpi` install -- works.** The built `.xpi` installed through the
+real add-on manager (`AddonManager.getInstallForFile().install()`): active,
+compatible, root URI `jar:file:///...xpi!/`. The first tab open extracted the
+helper into the data dir (`fast-reader-helper-bin/`, 6.0 MB, executable); the
+tab opened, rendered, and the helper process had the allocator env set.
+
+**Restart with a reader tab open -- found and fixed a real bug.** With a
+`fastreader` tab and an ordinary PDF.js reader tab open, quitting Zotero saved
+both into the session; on relaunch **neither** came back:
+`TypeError: undefined has no properties` at `tabs.js:611`. Zotero calls
+`restoreState[type]` per saved tab, and for a type with no hook it destructures
+`undefined`, aborting the restore of every later tab -- so a plugin tab could
+break the user's *normal* tabs. A plugin-registered hook did not help (the
+plugin can start after the pane has restored). Fix: the plugin wraps
+`Zotero_Tabs.getState()` so its tabs are never saved (`sessionState.ts`, 3
+tests). Re-verified on the final `.xpi`: saved session has only `library` and
+`reader`; after relaunch both restore, 0 errors, no helper process left over.
+Not fixed: a session file *already* containing a `fastreader` tab (only
+possible from a development build) -- delete that entry from the profile's
+`session.json`.
+
+**Second bug found by measuring: Zotero-side memory.** After 30 page turns
+Zotero's own process held ~1465 MB; a forced GC took it to ~964 MB. Each page
+is a 10-25 MB buffer Gecko collects lazily. The tab now forces a GC 1.5 s
+after the last frame, and after a background trim or close.
+
+**Memory vs Zotero's PDF.js reader (Zotero 10.0.8, macOS arm64, retina).**
+Fresh Zotero launch per run; metric is the summed `phys_footprint` of the
+whole process tree (Zotero, its Gecko children, and our helper), as a delta
+over that run's own baseline. Same Zotero, same PDFs. Fast Reader = the final
+build; 2 runs per cell (PDF.js: 1-2, three PDF.js repeats were lost to a
+harness error). Medians, MB:
+
+| PDF | PDF.js: open / after 30 turns | Fast Reader: open / after 30 turns | first page |
+|---|---|---|---|
+| 0.3 MB, 8 pp | +463 / +934 | +8 / +322 | 407 ms vs 26 ms |
+| 2.5 MB, 5 pp | +353 / +517 | +25 / +104 | 426 vs 27 |
+| 9.9 MB, 48 pp | +500 / +895 | +1 / +252 | 401 vs 25 |
+| 4.2 MB, 464 pp | +424 / +638 | -33 / +86 | 373 vs 26 |
+| 5.3 MB, 40 pp, scan | +27 / +688 | -18 / +220 | 384 vs 26 |
+
+A fairer control, because the Fast Reader tab forces GCs and PDF.js does not:
+the same sequence with a forced GC applied to **both** (one run each, after a
+GC'd baseline). 464 pp: PDF.js +312 after 30 turns / +165 once backgrounded,
+Fast Reader +66 / -46. 48 pp: PDF.js +568 / +232, Fast Reader +147 / -102.
+So the advantage survives equal treatment: roughly 3-4x less while reading,
+and the Fast Reader tab gives its memory back when backgrounded while PDF.js
+keeps ~165-230 MB.
+
+Read these with their limits:
+- Few runs (1-2 per cell) and a noisy baseline (~+-50 MB between launches);
+  differences of tens of MB are noise, the 3-5x gaps are not. Negative deltas
+  after backgrounding mean "below this run's baseline" (the forced GC also
+  frees garbage Zotero already held), not that the tab uses negative memory.
+- "Open" for the scan with PDF.js (+27) looks small only because PDF.js
+  renders lazily; its +688 after reading is the real cost.
+- Page-turn latency is **not** compared: PDF.js usually has the page
+  pre-rendered, so my probe reads ~0 ms. Where it was a real wait (5-pp
+  paper) PDF.js was 134/268 ms (p50/p95) vs 52-58 ms. Fast Reader end to end
+  (key -> pixels painted in the tab) is 30-76 ms, vs ~12 ms for the helper
+  alone: the rest is reading and painting a ~20 MB frame.
+- The scan is the Fast Reader's weak case: the helper alone holds ~214 MB while
+  reading it (MuPDF's decoded-image store), still well under PDF.js's total.
+- Reproduce: `scripts/pdfjs-compare/` (isolated profile required).
+
+**Linux (helper only), real.** `scripts/test-linux-docker.sh` builds and tests
+the helper in a Debian container (glibc 2.36, **aarch64**): all 60 Rust tests
+pass; serve mode runs end to end. Default glibc malloc balloons (text PDF 71 MB
+while reading; the scan keeps 132 MB after `trim`). With
+`MALLOC_MMAP_THRESHOLD_=1048576` (now set by the plugin on Linux): 27 MB flat,
+scan trims to 10 MB, no latency change. An x86_64 (emulated) container run
+crashed the OrbStack daemon before finishing, so **x86_64 Linux -- the
+architecture the plugin actually ships for -- was not run**; same code and
+allocator, but unmeasured. Zotero-on-Linux (the tab itself) is untested.
+
+**Still not verified:**
+- **Windows**, entirely (helper build, `Subprocess` stdio on Windows, whether a
+  console window flashes when the console-subsystem helper is spawned -- the
+  Windows parts of Gecko's `Subprocess` are not in the macOS bundle to read).
+  Review of the portable Rust/JS code found nothing platform-specific, which is
+  not the same as running it.
+- Real keyboard/trackpad input (keys were dispatched as DOM events; pinch-zoom
+  and Cmd/Ctrl+F against Zotero's own shortcuts untried by a person); no
+  screenshot of the tab was possible (no screen-capture permission), content was
+  verified by reading the canvas back.
+- Zotero 11 as a real install (blocked by `strict_max_version`), and the
+  window-mode menu entry's spawn on 10.0.8 (only its helper-path resolution is
+  shared with the tab path, which was exercised).
+
+**Another real bug found on the way (affects the window mode too):** on Zotero 11
+`Zotero.File.pathToFile(rootURI)` throws "Unexpected path value 'file:///...'"
+for an unpacked install, so *neither* open path could find the helper binary.
+Fixed by converting the URI with Gecko's file protocol handler
+(`getFileFromURLSpec`), which works on every version.
+
+Test count: 60 Rust + 75 TypeScript, all passing.
 
 ## A third real bug: stale cached extraction after a reinstall
 

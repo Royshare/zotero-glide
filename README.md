@@ -4,11 +4,16 @@ A lightweight MuPDF-based reading companion for Zotero.
 
 ## What this is
 
-An experimental Zotero 10 plugin that adds **"Open in Fast Reader"** to a
-PDF attachment's context menu. Choosing it launches a separate, native,
-MuPDF-based reader process for that one PDF -- a second, minimal reading
-path alongside Zotero's own built-in Gecko/PDF.js reader, not a
-replacement for it.
+An experimental Zotero plugin that adds **"Open in Fast Reader"** to a
+PDF attachment's context menu. Choosing it opens the PDF as a **tab in
+Zotero's own tab bar**, rendered by a separate, native, MuPDF-based helper
+process (one per tab) -- a second, minimal reading path alongside Zotero's
+own built-in Gecko/PDF.js reader, not a replacement for it. A second menu
+entry, **"Open in Fast Reader (separate window)"**, opens the same helper in
+its own OS window instead.
+
+See [`docs/adr/002-in-tab-reader.md`](docs/adr/002-in-tab-reader.md) for
+how the tab works and the alternatives that were ruled out.
 
 The hypothesis being tested: a PDF reader that is fully process-isolated
 from Zotero's Gecko-based reader has substantially lower lifecycle
@@ -34,10 +39,21 @@ for the full non-goals list this was built against.
 
 ## Architecture
 
+In-tab mode (default):
+
+```
+Zotero (unmodified)
+ └─ tab "fastreader"  = toolbar + <canvas>          packages/zotero-plugin/src/tabView.ts
+      ▲ page frames (raw RGBA files)  │ JSON commands over stdin
+      └───────────── fast-reader-helper --serve (headless, one per tab) ─────────┘
+```
+
+Separate-window mode (the original design):
+
 ```
 Zotero (unmodified)
      │
-     │  right-click a PDF attachment -> "Open in Fast Reader"
+     │  right-click a PDF attachment -> "Open in Fast Reader (separate window)"
      ▼
 packages/zotero-plugin/addon/       (thin: menu + process spawn only)
      │  Subprocess.call({ command, arguments: [pdfPath] })
@@ -52,7 +68,7 @@ packages/reader-helper/            (standalone native process, per PDF)
      └── (MuPDF, statically linked, behind the engine module only)
 ```
 
-Closing the Fast Reader window ends that one process; Zotero is
+Closing the Fast Reader tab (or window) ends that one process; Zotero is
 unaffected and never blocks on it. Reopening the same PDF starts a
 brand-new process with a clean cache -- there's no persistent
 in-plugin state to go stale. Full rationale for the specific
@@ -105,10 +121,24 @@ developed and tested):
 FAST_READER_DEBUG=1 ./packages/reader-helper/target/release/fast-reader-helper path/to/some.pdf
 ```
 
-Keyboard: `PageDown`/`Right`/`Space` next page, `PageUp`/`Left` previous,
-`+`/`-` zoom, `1` fit width, `2` fit page, `Ctrl/Cmd+F` search (`Enter`
-next hit, `Shift+Enter` previous), `Ctrl/Cmd+G` go to page, `Esc`
-close search/goto or quit.
+Keyboard (standalone window): `PageDown`/`Right`/`Space` next page,
+`PageUp`/`Left` previous, `+`/`-` zoom, `1` fit width, `2` fit page,
+`Ctrl/Cmd+F` search (`Enter` next hit, `Shift+Enter` previous),
+`Ctrl/Cmd+G` go to page, `Esc` close search/goto or quit.
+
+Keyboard (tab): `←`/`→` previous/next page; `Space`/`PageDown` scroll the
+page and flip to the next page once at the bottom (`Shift+Space`/`PageUp`
+likewise upward); `Home`/`End` first/last page; `+`/`-` or pinch /
+`Ctrl/Cmd`+wheel zoom; `1` fit width, `2` fit page; `Ctrl/Cmd+F` search
+(`Enter` next hit, `Shift+Enter` previous, `Esc` clear); `Ctrl/Cmd+G` go to
+page. The toolbar has the same controls.
+
+Headless (what the tab drives -- JSON lines on stdin, frames written to
+files; protocol in `packages/reader-helper/src/serve.rs`):
+
+```bash
+fast-reader-helper --serve --frame-dir /tmp/frames --file some.pdf
+```
 
 Inside Zotero -- confirmed working via `zotero-plugin-scaffold`, which
 installs the plugin as a temporary add-on over the Firefox Remote
@@ -154,7 +184,7 @@ cross-platform binaries are produced.
 | `npm start` | `zotero-plugin serve` -- launch Zotero with the plugin loaded live, hot-reload on save (see above) |
 | `npm run build` | rebuilds the native helper (`prebuild`), then `zotero-plugin build && tsc --noEmit` -- bundles `src/` into `.scaffold/build/zotero-fast-reader.xpi` and type-checks |
 | `npm run typecheck` | `tsc --noEmit` alone |
-| `npm test` | run the 47 pure-logic unit tests -- Node's built-in test runner, running the `.ts` sources directly (Node v26's native type-stripping, no ts-node/jest/babel) |
+| `npm test` | run the 75 pure-logic unit tests -- Node's built-in test runner, running the `.ts` sources directly (Node v26's native type-stripping, no ts-node/jest/babel) |
 | `npm run release` | `zotero-plugin release` -- publish a GitHub release with the built xpi; needs a real git remote + `GITHUB_TOKEN`, not configured for this repo yet |
 
 The plugin's source (`packages/zotero-plugin/src/*.ts`) is real
@@ -166,10 +196,12 @@ section for why bundling replaced the earlier multi-file
 ## Tests executed
 
 ```bash
-(cd packages/reader-helper && cargo test)   # 42 tests: engine, cache, blit pixel math,
-                                             #   session navigation/zoom/search, argv parsing
-(cd packages/zotero-plugin && node --test)  # 47 tests: PDF detection, platform
-                                             #   resolution, argv construction,
+(cd packages/reader-helper && cargo test)   # 60 tests: engine, cache, blit pixel math,
+                                             #   session navigation/zoom/search, argv parsing,
+                                             #   serve-mode protocol + frames
+(cd packages/zotero-plugin && node --test)  # 75 tests: PDF detection, platform
+                                             #   resolution, argv construction, wire protocol,
+                                             #   keymap, helper connection (spawn/read/close),
                                              #   missing-executable/spawn-failure handling
 ```
 
@@ -182,7 +214,10 @@ inspection, not by looking at the window).
 ## Benchmarks
 
 ```bash
-bash scripts/benchmark-reader.sh release
+bash scripts/benchmark-reader.sh release     # standalone window
+python3 scripts/benchmark-serve.py           # in-tab (--serve) mode: footprint + page-turn latency
+scripts/test-linux-docker.sh                 # helper tests + that benchmark on real Linux, in a container
+# scripts/pdfjs-compare/: head-to-head memory vs Zotero's PDF.js reader (needs an isolated Zotero profile; see its compare.py)
 ```
 
 Full methodology, the actual numbers observed, and an honest account of
@@ -198,11 +233,12 @@ for image-heavy documents, and that's documented rather than hidden.
 
 ## Remaining v0.2 work
 
-- A real click on the menu item, and a real look at the docked window,
-  confirming both work from a live user's perspective (see STATUS.md --
-  everything both depend on is independently confirmed at the data level;
-  actually seeing them hasn't been, since this sandbox can't drive UI
-  input or capture native windows).
+- A person actually using the tab (real keys, trackpad pinch, tab
+  switching) and a head-to-head memory comparison against Zotero's PDF.js
+  reader on real papers -- STATUS.md's "v0.3" lists what was verified
+  mechanically and what wasn't.
+- Remember last page/zoom per PDF (cheap now: the helper reports `page` on
+  every frame).
 - Robust text selection + copy (deliberately deferred, not attempted as a
   half-measure -- see `docs/adr/001-*.md`).
 - Continuous scrolling (v0.1 is single-page + navigation by design).
