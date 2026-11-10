@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Zotero Fast Reader contributors
+
 /**
  * Typed errors matching the launch-failure categories in the project
  * brief (§12): "helper missing, attachment file missing, unsupported

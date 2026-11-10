@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Zotero Fast Reader contributors
+
 //! The reader's actual behavior -- navigation, zoom, search, and the
 //! render/cache/prefetch/evict cycle -- with no windowing dependency. `App`
 //! (winit) and the benchmark harness (`src/bin/bench_navigate.rs`) both

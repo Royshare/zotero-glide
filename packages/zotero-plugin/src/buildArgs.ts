@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Zotero Fast Reader contributors
+
 /**
  * Builds the argv array passed to `fast-reader-helper` (see brief §7:
  * "Do NOT construct a shell command by concatenating unescaped strings.

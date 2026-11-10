@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Zotero Fast Reader contributors
+
 //! In-memory reader state. No persistence in v0.1 (see §10 of the brief) --
 //! but the fields are chosen so that a future `attachmentKey` +
 //! `scrollPosition` persistence layer (docs/future-ipc.md) is a pure

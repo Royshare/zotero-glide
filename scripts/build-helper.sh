@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Zotero Fast Reader contributors
 # Builds fast-reader-helper for the current host and copies it into
 # packages/zotero-plugin/addon/bin/<platform-dir>/, matching the layout
 # resolvePlatformDir() (packages/zotero-plugin/src/platform.js) and

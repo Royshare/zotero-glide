@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Zotero Fast Reader contributors
+
 /**
  * One reader *tab* inside Zotero's own tab bar: a `Zotero_Tabs` tab whose
  * content is a `ReaderView` (canvas) fed by a per-tab

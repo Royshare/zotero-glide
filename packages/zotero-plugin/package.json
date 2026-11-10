@@ -17,9 +17,9 @@
   },
   "scripts": {
     "test": "node --test",
-    "prestart": "bash ../../scripts/build-helper.sh",
+    "prestart": "bash ../../scripts/build-helper.sh && bash ../../scripts/prepare-legal.sh",
     "start": "zotero-plugin serve",
-    "prebuild": "bash ../../scripts/build-helper.sh",
+    "prebuild": "bash ../../scripts/build-helper.sh && bash ../../scripts/prepare-legal.sh",
     "build": "zotero-plugin build && tsc --noEmit",
     "typecheck": "tsc --noEmit",
     "release": "zotero-plugin release"
@@ -29,5 +29,6 @@
     "typescript": "^7.0.2",
     "zotero-plugin-scaffold": "^0.8.3",
     "zotero-types": "^4.1.3"
-  }
+  },
+  "license": "AGPL-3.0-or-later"
 }

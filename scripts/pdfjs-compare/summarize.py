@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Zotero Fast Reader contributors
+
 import json, statistics, sys, collections
 rows = [json.loads(l) for l in open(sys.argv[1])]
 by = collections.defaultdict(list)

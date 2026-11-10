@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Zotero Fast Reader contributors
+
 use mupdf::{Colorspace, Document, ImageFormat, Matrix};
 
 fn main() {

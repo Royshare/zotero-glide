@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Zotero Fast Reader contributors
+
 //! Headless navigation benchmark: drives `ReaderSession` (the same
 //! render/cache/prefetch/evict code path `App`'s `RedrawRequested` handler
 //! uses) through a document without opening a window, and reports RSS and

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Zotero Fast Reader contributors
+
 /**
  * Ambient declarations for real Zotero globals not (yet) covered by the
  * community `zotero-types` package, confirmed live against a running

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Zotero Fast Reader contributors
+
 /**
  * Zotero-specific glue: menu registration, real filesystem/process APIs,
  * error dialog. Deliberately thin -- all actual decision logic (PDF

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Zotero Fast Reader contributors
 """Generate small, fully synthetic (owned, CC0) PDF fixtures for tests and
 benchmarks. No external PDF libraries required -- writes raw PDF syntax
 directly so the fixtures have no licensing entanglement of their own.

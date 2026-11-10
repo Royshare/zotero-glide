@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Zotero Fast Reader contributors
+
 //! Small, pragmatic abstraction over the PDF library. GUI and cache code
 //! depend only on this trait -- no `mupdf` types cross the boundary.
 

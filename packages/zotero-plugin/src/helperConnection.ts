@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Zotero Fast Reader contributors
+
 /**
  * Owns one `fast-reader-helper --serve` child process for one reader tab:
  * serialized command writes, an incremental stdout read loop that turns

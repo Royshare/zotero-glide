@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Zotero Fast Reader contributors
 # usage: zlaunch.sh <Zotero.app path> <profile dir> <data dir> <rdp port>
 APP="$1"; PROFILE="$2"; DATA="$3"; PORT="$4"
 mkdir -p "$PROFILE" "$DATA"

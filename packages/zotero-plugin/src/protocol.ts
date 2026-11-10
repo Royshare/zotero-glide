@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Zotero Fast Reader contributors
+
 /**
  * Wire protocol between the reader *tab* and `fast-reader-helper --serve`
  * (see packages/reader-helper/src/serve.rs for the authoritative

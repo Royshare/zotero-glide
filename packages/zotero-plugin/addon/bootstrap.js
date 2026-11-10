@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Zotero Fast Reader contributors
+
 /**
  * Zotero 7+/10 bootstrapped plugin lifecycle. Structure follows the
  * pattern documented at zotero.org/support/dev/zotero_7_for_developers

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Zotero Fast Reader contributors
+
 //! Window, input, and blit-to-surface. Delegates all reader behavior to
 //! `ReaderSession`; knows nothing about MuPDF types directly (see docs/adr).
 //!

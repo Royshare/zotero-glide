@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Zotero Fast Reader contributors
+
 use fast_reader_helper::app::{App, DockGeometry};
 use fast_reader_helper::engine::mupdf_engine::MuPdfDocumentEngine;
 use fast_reader_helper::engine::DocumentEngine;
@@ -101,6 +104,10 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
 fn main() -> ExitCode {
     log::init();
     let argv: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(info) = fast_reader_helper::about::info_for(&argv) {
+        print!("{info}");
+        return ExitCode::SUCCESS;
+    }
     let args = match parse_args(&argv) {
         Ok(a) => a,
         Err(e) => {

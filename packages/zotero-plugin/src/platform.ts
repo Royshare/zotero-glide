@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Zotero Fast Reader contributors
+
 /**
  * Maps a platform/arch pair to the `bin/<dir>/` name used in
  * docs/cross-platform.md's binary layout. Pure function, no Zotero

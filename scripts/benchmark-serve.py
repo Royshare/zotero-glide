@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Zotero Fast Reader contributors
 """Memory/latency benchmark for the in-tab (--serve) mode of fast-reader-helper.
 
 Drives the real helper binary over its stdio protocol exactly as the Zotero

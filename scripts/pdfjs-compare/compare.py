@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Zotero Fast Reader contributors
 """Usage: python3 compare.py <workdir> [paper-name ...]   (env: OUT=file.jsonl MODES=pdfjs,fast ZOTERO_APP=...)
 Needs: an ISOLATED Zotero profile at <workdir>/p10 and data dir <workdir>/d10 with the plugin's
 built .xpi installed and the benchmark PDFs imported (attachment ids in PAPERS below).

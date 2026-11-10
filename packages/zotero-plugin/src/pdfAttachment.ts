@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Zotero Fast Reader contributors
+
 /**
  * PDF attachment detection and path resolution, using only the Zotero
  * item API surface confirmed during research (see docs/adr and

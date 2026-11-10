@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Zotero Fast Reader contributors
+
 /// <reference lib="dom" />
 /**
  * DOM for one in-tab reader: toolbar + a natively scrolling canvas that

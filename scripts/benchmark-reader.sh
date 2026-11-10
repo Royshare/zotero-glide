@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Zotero Fast Reader contributors
 # Performance validation procedure for fast-reader-helper (brief §16).
 #
 # Two measurement paths, on purpose (see docs/benchmark-methodology.md):

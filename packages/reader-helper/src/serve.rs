@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Zotero Fast Reader contributors
+
 //! Headless "serve" mode: the helper has no window; a host (the Zotero
 //! plugin's reader *tab*) drives it over stdin/stdout and shows the pixels
 //! itself. See docs/adr/002-in-tab-reader.md.

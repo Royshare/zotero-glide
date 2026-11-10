@@ -2,6 +2,9 @@
 name = "fast-reader-helper"
 version = "0.1.0"
 edition = "2024"
+license = "AGPL-3.0-or-later"
+description = "Headless/windowed MuPDF PDF reader process used by the Zotero Fast Reader plugin"
+publish = false
 
 [dependencies]
 mupdf = { version = "0.8.0", default-features = false, features = ["base14-fonts"] }

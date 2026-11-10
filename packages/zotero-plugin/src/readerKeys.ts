@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Zotero Fast Reader contributors
+
 /**
  * Keyboard -> reader action mapping for the in-tab reader. Pure, so the
  * behavior (especially "Space at the bottom of a page flips to the next

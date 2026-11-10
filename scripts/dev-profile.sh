@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Zotero Fast Reader contributors
 # Creates (or reuses) an isolated Zotero profile + data directory for
 # developing this plugin, per brief §14: "Do not develop against a user's
 # production Zotero database/profile when avoidable." Everything lives

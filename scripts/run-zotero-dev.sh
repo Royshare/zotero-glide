@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Zotero Fast Reader contributors
 # Launches Zotero against the isolated dev profile created by
 # scripts/dev-profile.sh, with debug logging on. Set ZOTERO_APP to the
 # Zotero executable if it isn't at the default macOS install location.

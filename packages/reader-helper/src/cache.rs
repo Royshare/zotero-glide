@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Zotero Fast Reader contributors
+
 //! Bounded render cache: current page, plus `radius` neighbors on each
 //! side. This is the whole cache policy -- deliberately not an LRU or a
 //! generic cache crate, because the eviction rule the product needs

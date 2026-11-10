@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Zotero Fast Reader contributors
+
 /**
  * Bundle entry point (see zotero-plugin.config.mts's esbuildOptions).
  * Everything else under src/ uses real ES import/export and is bundled

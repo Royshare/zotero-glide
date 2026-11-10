@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Zotero Fast Reader contributors
+
 // Minimal Firefox RDP client: evaluates JS in Zotero's parent process (chrome privileges).
 import net from "node:net";
 export function connect(port) {

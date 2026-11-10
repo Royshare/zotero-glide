@@ -252,6 +252,15 @@ for image-heavy documents, and that's documented rather than hidden.
   [`docs/licensing.md`](docs/licensing.md) that need to precede any
   distribution beyond active development.
 
+## License
+
+AGPL-3.0-or-later (see `LICENSE`). The helper statically links MuPDF, which is
+AGPL-3.0-or-later, so the whole project is too. Third-party components:
+`THIRD_PARTY_NOTICES.md`. Where the source for a distributed build is, and how
+the obligations are met: [`docs/licensing.md`](docs/licensing.md). The `.xpi`
+carries `legal/LICENSE`, `legal/THIRD_PARTY_NOTICES.md` and `legal/SOURCE.md`;
+`fast-reader-helper --license` prints the notice from the binary.
+
 ## Known platform limitations
 
 - Developed and tested only on macOS (Apple Silicon). The engine, cache,

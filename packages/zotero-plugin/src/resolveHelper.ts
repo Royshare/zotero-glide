@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Zotero Fast Reader contributors
+
 /**
  * Resolves the absolute path to the platform-appropriate
  * `fast-reader-helper` executable, given the plugin's own root directory.

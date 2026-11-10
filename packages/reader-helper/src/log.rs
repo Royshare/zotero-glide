@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Zotero Fast Reader contributors
+
 //! Minimal debug logging (§17 of the brief). Off by default; enabled with
 //! `FAST_READER_DEBUG=1`. Only ever called from event-driven code paths
 //! (open, navigate, render, cache hit/evict, search, close) -- never from
