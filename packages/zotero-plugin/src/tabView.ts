@@ -43,19 +43,23 @@ export interface MenuItem {
   label: string;
   icon?: IconName;
   checked?: boolean;
+  /** a color dot shown instead of an icon */
+  swatch?: string;
   disabled?: boolean;
   separator?: boolean;
   run?: () => void;
 }
 
 export interface PagePointer {
-  type: "down" | "move" | "up" | "dblclick" | "leave";
+  type: "down" | "move" | "up" | "dblclick" | "leave" | "contextmenu";
   clientX: number;
   clientY: number;
   shiftKey: boolean;
   /** 1 single, 2 double, 3 triple click */
   detail: number;
   button: number;
+  /** suppresses the native context menu (contextmenu events only) */
+  preventDefault?: () => void;
 }
 
 export interface ViewEvents {
@@ -334,7 +338,7 @@ export class ReaderView {
       { passive: false }
     );
     const pointer = (type: PagePointer["type"]) => (e: MouseEvent) =>
-      ev.pointer({ type, clientX: e.clientX, clientY: e.clientY, shiftKey: e.shiftKey, detail: e.detail, button: e.button });
+      ev.pointer({ type, clientX: e.clientX, clientY: e.clientY, shiftKey: e.shiftKey, detail: e.detail, button: e.button, preventDefault: () => e.preventDefault() });
     this.pagesEl.addEventListener("mousedown", (e) => {
       this.focus();
       this.hidePopups();
@@ -343,6 +347,7 @@ export class ReaderView {
     this.pagesEl.addEventListener("mousemove", pointer("move"));
     this.pagesEl.addEventListener("mouseleave", pointer("leave"));
     this.pagesEl.addEventListener("dblclick", pointer("dblclick"));
+    this.pagesEl.addEventListener("contextmenu", pointer("contextmenu"));
     this.win.addEventListener("mouseup", pointer("up"));
     this.root.addEventListener("mousedown", (e) => {
       if (!(e.target as Element).closest?.(".fr-popup")) this.hidePopups();
@@ -655,7 +660,12 @@ export class ReaderView {
       check.className = "fr-check";
       if (it.checked) check.append(createIcon(this.doc, "check", 14));
       b.append(check);
-      if (it.icon) b.append(createIcon(this.doc, it.icon, 15));
+      if (it.swatch) {
+        const dot = this.doc.createElementNS(XHTML, "span") as HTMLElement;
+        dot.className = "fr-swatch";
+        dot.style.background = it.swatch;
+        b.append(dot);
+      } else if (it.icon) b.append(createIcon(this.doc, it.icon, 15));
       b.append(this.doc.createTextNode(it.label));
       b.disabled = !!it.disabled;
       b.addEventListener("click", (e) => {
@@ -668,6 +678,19 @@ export class ReaderView {
     const r = anchor.getBoundingClientRect();
     this.placePopup(r.right - 240, r.bottom);
   }
+
+  /** A context menu at a pointer position. */
+  showMenuAt(x: number, y: number, items: MenuItem[]): void {
+    const probe = this.doc.createElementNS(XHTML, "span") as HTMLElement;
+    probe.getBoundingClientRect = () => new DOMRect(x, y, 0, 0);
+    this.showMenu(probe, items);
+    // showMenu right-aligns to the anchor; re-place at the pointer instead
+    this.placePopup(x, y - 10);
+  }
+
+  /** Marks one sidebar card as the selected (expanded) one. */
+  selectedAnnotation: string | null = null;
+  private focusAnnotationComment = false;
 
   // -------------------------------------------------------------- sidebar
   setSidebarTab(tab: SidebarTab): void {
@@ -760,11 +783,37 @@ export class ReaderView {
         t.textContent = a.text;
         card.append(t);
       }
-      if (a.comment) {
+      const selected = this.selectedAnnotation === a.key;
+      card.dataset.selected = String(selected);
+      if (a.external) {
+        const who = [a.author, a.comment].filter(Boolean).join(": ");
+        if (who) {
+          const c = this.doc.createElementNS(XHTML, "div") as HTMLElement;
+          c.className = "fr-ann-comment";
+          c.textContent = who;
+          card.append(c);
+        }
+      } else if (selected) {
+        const ta = this.doc.createElementNS(XHTML, "textarea") as HTMLTextAreaElement;
+        ta.placeholder = a.kind === "note" ? "Note text" : "Add comment";
+        ta.value = a.comment;
+        ta.addEventListener("keydown", (e) => e.stopPropagation());
+        ta.addEventListener("click", (e) => e.stopPropagation());
+        ta.addEventListener("blur", () => {
+          if (ta.value !== a.comment) this.ev.commentAnnotation(a.key, ta.value);
+        });
+        card.append(ta);
+        if (this.focusAnnotationComment) this.doc.defaultView?.setTimeout(() => ta.focus(), 0);
+      } else if (a.comment) {
         const c = this.doc.createElementNS(XHTML, "div") as HTMLElement;
         c.className = "fr-ann-comment";
         c.textContent = a.comment;
         card.append(c);
+      } else {
+        const add = this.doc.createElementNS(XHTML, "div") as HTMLElement;
+        add.className = "fr-ann-add";
+        add.textContent = "Add comment";
+        card.append(add);
       }
       card.addEventListener("click", () => this.ev.jumpToAnnotation(a.key));
       this.sideBody.append(card);

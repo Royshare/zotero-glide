@@ -1011,6 +1011,38 @@ export class ReaderTab {
     });
   }
 
+  /** Right-click menu for an annotation (sidebar card or on the page). */
+  private showAnnotationMenu(key: string, x: number, y: number): void {
+    const a = this.annotations.find((k) => k.key === key);
+    if (!a) return;
+    if (a.external) {
+      return this.view.showMenuAt(x, y, [
+        { label: "Go to annotation", icon: "book-open", run: () => this.revealAnnotation(key) },
+        { label: "Copy text", icon: "copy", disabled: !(a.text || a.comment), run: () => this.d.host.copyText(a.text || a.comment) },
+        { separator: true, label: "" },
+        { label: "Stored in the PDF file (read-only)", disabled: true },
+      ]);
+    }
+    const items: MenuItem[] = [
+      { label: "Go to annotation", icon: "book-open", run: () => this.revealAnnotation(key) },
+      { label: "Edit comment", icon: "message-square", run: () => this.revealAnnotation(key, true) },
+      ...(a.kind === "image"
+        ? [
+            { label: "Copy image", icon: "copy" as const, disabled: !this.imageUrls.has(key), run: () => this.copyImageFromUrl(this.imageUrls.get(key)) },
+            { label: "Save image as…", icon: "download" as const, disabled: !this.imageUrls.has(key), run: () => this.saveImageFromUrl(this.imageUrls.get(key), `annotation-p${a.pageIndex + 1}.png`) },
+          ]
+        : []),
+      { separator: true, label: "" },
+      ...ANNOTATION_COLORS.map((c): MenuItem => ({ label: c.name, swatch: c.hex, checked: c.hex.toLowerCase() === a.color.toLowerCase(), run: () => void this.d.annotations.update(key, { color: c.hex }) })),
+      { separator: true, label: "" },
+      { label: "Copy text", icon: "copy", disabled: !a.text || a.kind === "image", run: () => this.d.host.copyText(a.text) },
+      { label: "Create Zotero note", icon: "file-text", run: () => void this.d.annotations.createNote([key]) },
+      { separator: true, label: "" },
+      { label: "Delete annotation", icon: "trash", run: () => void this.d.annotations.remove(key) },
+    ];
+    this.view.showMenuAt(x, y, items);
+  }
+
   /** Scrolls an annotation into view and optionally opens its editor. */
   revealAnnotation(key: string, edit = false): void {
     const a = this.annotations.find((x) => x.key === key) ?? this.d.annotations.list().find((x) => x.key === key);
