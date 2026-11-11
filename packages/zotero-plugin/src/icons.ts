@@ -35,6 +35,7 @@ export const ICONS = {
   printer: [["path", { d: "M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" }], ["path", { d: "M6 9V3a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v6" }], ["rect", { x: 6, y: 14, width: 12, height: 8, rx: 1 }]],
   list: [["path", { d: "M3 12h.01" }], ["path", { d: "M3 18h.01" }], ["path", { d: "M3 6h.01" }], ["path", { d: "M8 12h13" }], ["path", { d: "M8 18h13" }], ["path", { d: "M8 6h13" }]],
   "layout-grid": [["rect", { width: 7, height: 7, x: 3, y: 3, rx: 1 }], ["rect", { width: 7, height: 7, x: 14, y: 3, rx: 1 }], ["rect", { width: 7, height: 7, x: 14, y: 14, rx: 1 }], ["rect", { width: 7, height: 7, x: 3, y: 14, rx: 1 }]],
+  image: [["rect", { width: 18, height: 18, x: 3, y: 3, rx: 2 }], ["circle", { cx: 9, cy: 9, r: 2 }], ["path", { d: "m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" }]],
   "message-square": [["path", { d: "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" }]],
   more: [["circle", { cx: 12, cy: 12, r: 1 }], ["circle", { cx: 19, cy: 12, r: 1 }], ["circle", { cx: 5, cy: 12, r: 1 }]],
   x: [["path", { d: "M18 6 6 18" }], ["path", { d: "m6 6 12 12" }]],
@@ -69,4 +70,18 @@ export function iconMarkup(name: IconName, size = 24): string {
     .map(([tag, a]) => `<${tag} ${Object.entries(a).map(([k, v]) => `${k}="${v}"`).join(" ")}/>`)
     .join("");
   return `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${shapes}</svg>`;
+}
+
+/** The Zotero Glide mark (Phosphor "book-open-text", MIT), filled, 256 viewBox. Shown in the reader's toolbar so it is clear this is the plugin. */
+export function createGlideMark(doc: Document, size = 16): SVGElement {
+  const NS = "http://www.w3.org/2000/svg";
+  const svg = doc.createElementNS(NS, "svg");
+  svg.setAttribute("viewBox", "0 0 256 256");
+  svg.setAttribute("width", String(size));
+  svg.setAttribute("height", String(size));
+  svg.setAttribute("fill", "currentColor");
+  const path = doc.createElementNS(NS, "path");
+  path.setAttribute("d", "M232,48L160,48C147.419,48 135.548,53.935 128,64C120.452,53.935 108.581,48 96,48L24,48C19.611,48 16,51.611 16,56L16,200C16,204.389 19.611,208 24,208L96,208C109.166,208 120,218.834 120,232C120,236.389 123.611,240 128,240C132.389,240 136,236.389 136,232C136,218.834 146.834,208 160,208L232,208C236.389,208 240,204.389 240,200L240,56C240,51.611 236.389,48 232,48ZM96,192L32,192L32,64L96,64C109.166,64 120,74.834 120,88L120,200C113.084,194.796 104.656,191.986 96,192ZM224,192L160,192C151.344,191.986 142.916,194.796 136,200L136,88C136,74.834 146.834,64 160,64L224,64L224,192Z");
+  svg.append(path);
+  return svg;
 }

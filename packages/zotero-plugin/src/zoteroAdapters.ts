@@ -81,9 +81,9 @@ export interface AnnotationItemLike {
   annotationPosition?: string;
 }
 
-/** Highlight, underline and note are drawn; image/ink/text annotations from Zotero's own reader are left alone. */
+/** Highlight, underline, note and image are drawn; ink/text annotations from Zotero's own reader are left alone. */
 export function annotationToRecord(item: AnnotationItemLike): AnnotationRecord | null {
-  if (item.annotationType !== "highlight" && item.annotationType !== "underline" && item.annotationType !== "note") return null;
+  if (item.annotationType !== "highlight" && item.annotationType !== "underline" && item.annotationType !== "note" && item.annotationType !== "image") return null;
   const pos = parsePosition(item.annotationPosition ?? "");
   if (!pos) return null;
   return {
@@ -100,7 +100,11 @@ export function annotationToRecord(item: AnnotationItemLike): AnnotationRecord |
 }
 
 interface ZoteroAnnotationApi {
-  Annotations: { saveFromJSON(att: unknown, json: Record<string, unknown>): Promise<unknown> };
+  Annotations: {
+    saveFromJSON(att: unknown, json: Record<string, unknown>): Promise<unknown>;
+    saveCacheImage?(item: unknown, blob: Blob): Promise<unknown>;
+    getCacheImagePath?(item: { libraryID: number; key: string }): string;
+  };
   DataObjectUtilities: { generateKey(): string };
   Items: { getByLibraryAndKey(libraryID: number, key: string): ZoteroItemApi | false | null; get(id: number): ZoteroItemApi | undefined };
   Notifier: {
@@ -133,10 +137,14 @@ export function createAnnotationBackend(Z: ZoteroAnnotationApi, att: AttachmentA
     list() {
       return att.getAnnotations().map(annotationToRecord).filter((r): r is AnnotationRecord => !!r);
     },
-    async create(draft: AnnotationDraft) {
+    async create(draft: AnnotationDraft, image?: Blob) {
       const key = Z.DataObjectUtilities.generateKey();
-      await Z.Annotations.saveFromJSON(att, { key, isExternal: false, ...draft });
+      const saved = await Z.Annotations.saveFromJSON(att, { key, isExternal: false, ...draft });
+      if (image && saved && Z.Annotations.saveCacheImage) await Z.Annotations.saveCacheImage(saved, image);
       return key;
+    },
+    imagePath(key) {
+      return Z.Annotations.getCacheImagePath?.({ libraryID: att.libraryID, key }) ?? null;
     },
     async update(key, patch) {
       const item = Z.Items.getByLibraryAndKey(att.libraryID, key);

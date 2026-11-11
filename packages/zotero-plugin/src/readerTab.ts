@@ -53,6 +53,7 @@ const REQUEST_OVERSCAN = 0.15;
 const KEEP_OVERSCAN = 0.4;
 
 const THUMB_ID_BASE = 1_000_000_000;
+const AREA_ID_BASE = 1_500_000_000;
 const THUMB_WIDTH = 120;
 const MAX_CACHED_TEXTS = 60;
 
@@ -88,7 +89,9 @@ export interface AnnotationRecord {
 /** Zotero-side annotation operations (implemented in fastReader.ts over Zotero.Annotations). */
 export interface AnnotationBackend {
   list(): AnnotationRecord[];
-  create(draft: AnnotationDraft): Promise<string>;
+  create(draft: AnnotationDraft, image?: Blob): Promise<string>;
+  /** Where Zotero keeps an image annotation's cached picture, if it has one. */
+  imagePath(key: string): string | null;
   update(key: string, patch: { color?: string; comment?: string }): Promise<void>;
   remove(key: string): Promise<void>;
   createNote(keys: string[]): Promise<void>;
@@ -99,6 +102,13 @@ export interface AnnotationBackend {
 /** Everything the reader asks of Zotero/the OS that isn't annotations. */
 export interface HostActions {
   copyText(text: string): void;
+  /** Puts a PNG on the clipboard as an image. */
+  copyImage(png: Uint8Array): void;
+  /** Asks where to save, writes the PNG; false if the user cancelled. */
+  saveImageAs(png: Uint8Array, defaultName: string): Promise<boolean>;
+  /** Asks for a folder (null if cancelled), then `writeImage` puts files in it. */
+  chooseFolder(): Promise<string | null>;
+  writeImage(folder: string, name: string, png: Uint8Array): Promise<void>;
   openURL(uri: string): void;
   openInZoteroReader(pageIndex: number): void;
   copyCitation(): Promise<void>;
@@ -156,6 +166,8 @@ interface Inflight {
   page: number;
   key: string;
   thumb: boolean;
+  /** an area capture: gets the bitmap (or null if it was superseded) instead of painting a page */
+  area?: (f: { bytes: Uint8Array; width: number; height: number } | null) => void;
 }
 
 interface SearchState {
@@ -196,6 +208,9 @@ export class ReaderTab {
   private arrange: Arrangement = { ...DEFAULT_ARRANGEMENT };
   private layout: Layout = { tops: [], lefts: [], heights: [], widths: [], total: 0, maxWidth: 0 };
   private tool: Tool = null;
+  private areaDrag: { page: number; x0: number; y0: number; x1: number; y1: number } | null = null;
+  private imageUrls = new Map<string, string>();
+  private imageLoading = new Set<string>();
   private pageNow = 0;
   private initialDone = false;
 
@@ -350,6 +365,7 @@ export class ReaderTab {
       case "frame":
         return void this.onFrame(ev);
       case "skipped":
+        this.inflight.get(ev.id)?.area?.(null);
         this.inflight.delete(ev.id);
         return;
       case "text":
@@ -660,6 +676,10 @@ export class ReaderTab {
           }
         }
         void this.d.removeFile(f.path).catch(() => {});
+        if (meta?.area) {
+          meta.area(bytes ? { bytes, width: f.width, height: f.height } : null);
+          continue;
+        }
         if (!bytes || !meta || this.disposed || !this.active) continue;
         if (meta.thumb) {
           this.view.drawThumb(meta.page, bytes, f.width, f.height);
@@ -801,6 +821,23 @@ export class ReaderTab {
     const page = this.pageUnder(e.clientX, e.clientY);
     const pt = this.clientToPage(page, e.clientX, e.clientY);
 
+    if (this.areaDrag) {
+      if (e.type === "move" || e.type === "up") {
+        const d = this.areaDrag;
+        const info = this.pages[d.page]!;
+        const q = this.clientToPage(d.page, e.clientX, e.clientY);
+        if (q) {
+          d.x1 = Math.min(info.w, Math.max(0, q.x));
+          d.y1 = Math.min(info.h, Math.max(0, q.y));
+        }
+        if (e.type === "move") return this.refreshOverlaysFor(d.page, d.page);
+        this.areaDrag = null;
+        this.refreshOverlaysFor(d.page, d.page);
+        void this.createImageFromArea(d.page, [Math.min(d.x0, d.x1), Math.min(d.y0, d.y1), Math.abs(d.x1 - d.x0), Math.abs(d.y1 - d.y0)]);
+      }
+      return;
+    }
+
     if (e.type === "move" && !this.drag) {
       if (!pt) return;
       const over = this.linkAt(page, pt.x, pt.y) || this.annotationAt(page, pt.x, pt.y);
@@ -811,6 +848,11 @@ export class ReaderTab {
     if (e.type === "down") {
       if (!pt) return;
       if (this.tool === "note") return void this.createNoteAt(page, pt.x, pt.y);
+      if (this.tool === "image") {
+        this.clearSelection();
+        this.areaDrag = { page, x0: pt.x, y0: pt.y, x1: pt.x, y1: pt.y };
+        return;
+      }
       const text = this.texts.get(page);
       const hit = text ? hitTest(text, page, pt.x, pt.y, { maxDistance: 6 }) : null;
       this.drag = { page, moved: false, startX: e.clientX, startY: e.clientY, wordMode: false };
@@ -1003,6 +1045,203 @@ export class ReaderTab {
     }
   }
 
+  /** The bitmap of a page-space rectangle, upright, at `scale` pixels per point (null if it could not be rendered). */
+  private renderArea(page: number, rect: Rect, scale: number): Promise<{ bytes: Uint8Array; width: number; height: number } | null> {
+    return new Promise((resolve) => {
+      const id = AREA_ID_BASE + this.nextId++;
+      this.inflight.set(id, { page, key: "area", thumb: false, area: resolve });
+      void this.conn.send({ cmd: "render", id, page, scale, rotate: 0, clip: rect });
+      this.d.setTimeout(() => resolve(null), 8000);
+    });
+  }
+
+  // ---- the Images sidebar tab: every picture in the document, like Zotero's own reader
+  private figures: Array<{ page: number; rect: Rect }> | null = null;
+  private figuresToken = 0;
+  private figureUrls: string[] = [];
+  private figureUrlAt = new Map<number, string>();
+  /** Frees the pictures of the Images tab (they are re-rendered when it is opened again). */
+  private dropFigureImages(): void {
+    this.figuresToken++;
+    this.figureUrlAt.clear();
+    for (const u of this.figureUrls.splice(0)) this.view.revokeUrl(u);
+  }
+
+  private showFigures(): void {
+    const token = ++this.figuresToken;
+    if (this.figures) return this.paintFigures(token);
+    this.view.renderFigures([], () => {});
+    for (let p = 0; p < this.pages.length; p++) if (!this.images.has(p) && !this.imagesPending.has(p)) {
+      this.imagesPending.add(p);
+      void this.conn.send({ cmd: "images", page: p });
+    }
+    this.buildFiguresIfReady();
+  }
+
+  private buildFiguresIfReady(): void {
+    if (this.figures || this.view.sidebarTabNow !== "images" || !this.pages.length) return;
+    if (this.pages.some((_, p) => !this.images.has(p))) return;
+    const out: Array<{ page: number; rect: Rect }> = [];
+    this.pages.forEach((info, page) => {
+      // pieces of one figure often come as several images: merge the ones that touch
+      const rects = (this.images.get(page) ?? []).filter((r) => r[2] >= 30 && r[3] >= 30).map((r) => [...r] as Rect);
+      const touch = (a: Rect, b: Rect) => a[0] <= b[0] + b[2] + 6 && b[0] <= a[0] + a[2] + 6 && a[1] <= b[1] + b[3] + 6 && b[1] <= a[1] + a[3] + 6;
+      for (let again = true; again; ) {
+        again = false;
+        for (let i = 0; i < rects.length && !again; i++) {
+          for (let j = i + 1; j < rects.length; j++) {
+            if (!touch(rects[i]!, rects[j]!)) continue;
+            const a = rects[i]!, b = rects[j]!;
+            const x0 = Math.min(a[0], b[0]), y0 = Math.min(a[1], b[1]);
+            rects[i] = [x0, y0, Math.max(a[0] + a[2], b[0] + b[2]) - x0, Math.max(a[1] + a[3], b[1] + b[3]) - y0];
+            rects.splice(j, 1);
+            again = true;
+            break;
+          }
+        }
+      }
+      for (const r of rects) {
+        const x0 = Math.max(0, r[0]), y0 = Math.max(0, r[1]);
+        const x1 = Math.min(info.w, r[0] + r[2]), y1 = Math.min(info.h, r[1] + r[3]);
+        const rect: Rect = [x0, y0, x1 - x0, y1 - y0];
+        if (rect[2] < 30 || rect[3] < 30) continue;
+        if (rect[2] * rect[3] > info.w * info.h * 0.9) continue; // a scanned page, not a figure
+        out.push({ page, rect });
+      }
+    });
+    this.figures = out;
+    this.paintFigures(++this.figuresToken);
+  }
+
+  private copyImageFromUrl(url: string | undefined): void {
+    if (!url) return this.d.host.notify("The image is not loaded yet.");
+    void this.view.urlBytes(url).then((png) => {
+      this.d.host.copyImage(png);
+      this.d.host.notify("Image copied.");
+    }).catch(() => this.d.host.notify("Could not copy the image."));
+  }
+
+  private saveImageFromUrl(url: string | undefined, name: string): void {
+    if (!url) return this.d.host.notify("The image is not loaded yet.");
+    void this.view.urlBytes(url).then((png) => this.d.host.saveImageAs(png, name)).then((saved) => saved && this.d.host.notify("Image saved.")).catch(() => this.d.host.notify("Could not save the image."));
+  }
+
+  /** A figure's PNG at a resolution good enough to keep (the sidebar copy is only 560 px wide). */
+  private async figurePng(f: { page: number; rect: Rect }): Promise<Uint8Array | null> {
+    const frame = await this.renderArea(f.page, f.rect, Math.min(5, Math.max(1, 2400 / f.rect[2])));
+    const blob = frame ? await this.view.encodePng(frame.bytes, frame.width, frame.height) : null;
+    if (!blob) return null;
+    const url = this.view.blobUrl(blob);
+    try {
+      return await this.view.urlBytes(url);
+    } finally {
+      this.view.revokeUrl(url);
+    }
+  }
+
+  private figureName(i: number): string {
+    const f = this.figures![i]!;
+    const nth = this.figures!.slice(0, i).filter((g) => g.page === f.page).length + 1;
+    return `figure-p${f.page + 1}-${nth}.png`;
+  }
+
+  private async saveFigure(i: number): Promise<void> {
+    const f = this.figures?.[i];
+    if (!f) return;
+    const png = await this.figurePng(f);
+    if (!png) return this.d.host.notify("Could not render the image.");
+    if (await this.d.host.saveImageAs(png, this.figureName(i))) this.d.host.notify("Image saved.");
+  }
+
+  /** Saves every picture of the document into a folder the user picks. */
+  private async saveAllFigures(): Promise<void> {
+    const figs = this.figures;
+    if (!figs?.length) return this.d.host.notify("No images in this document.");
+    const folder = await this.d.host.chooseFolder();
+    if (!folder) return;
+    this.d.host.notify(`Saving ${figs.length} images…`);
+    let saved = 0;
+    for (let i = 0; i < figs.length && !this.disposed; i++) {
+      const png = await this.figurePng(figs[i]!);
+      if (!png) continue;
+      try {
+        await this.d.host.writeImage(folder, this.figureName(i), png);
+        saved++;
+      } catch (e) {
+        this.d.debug(`[fast-reader] could not write image: ${e}`);
+      }
+    }
+    this.d.host.notify(saved === figs.length ? `Saved ${saved} images.` : `Saved ${saved} of ${figs.length} images.`);
+  }
+
+  private showFigureMenu(i: number, page: number, x: number, y: number): void {
+    this.view.showMenuAt(x, y, [
+      { label: "Copy image", icon: "copy", disabled: !this.figureUrlAt.has(i), run: () => this.copyImageFromUrl(this.figureUrlAt.get(i)) },
+      { label: "Save image as…", icon: "download", run: () => void this.saveFigure(i) },
+      { label: "Save all images…", icon: "download", run: () => void this.saveAllFigures() },
+      { label: `Go to page ${page + 1}`, icon: "book-open", run: () => this.goToPage(page) },
+    ]);
+  }
+
+  private paintFigures(token: number): void {
+    const figs = this.figures;
+    if (!figs) return;
+    this.figureUrlAt.clear();
+    for (const u of this.figureUrls.splice(0)) this.view.revokeUrl(u);
+    this.view.renderFigures(figs.map((f) => ({ page: f.page, aspect: f.rect[3] / f.rect[2] })), (i) => this.goToPage(figs[i]!.page), (i, x, y) => this.showFigureMenu(i, figs[i]!.page, x, y), () => void this.saveAllFigures());
+    void (async () => {
+      for (let i = 0; i < figs.length; i++) {
+        if (token !== this.figuresToken || this.disposed || this.view.sidebarTabNow !== "images") return;
+        const f = figs[i]!;
+        const frame = await this.renderArea(f.page, f.rect, Math.min(4, Math.max(0.5, 560 / f.rect[2])));
+        if (!frame || token !== this.figuresToken) continue;
+        const blob = await this.view.encodePng(frame.bytes, frame.width, frame.height);
+        if (blob) {
+          const url = this.view.blobUrl(blob);
+          this.figureUrls.push(url);
+          this.figureUrlAt.set(i, url);
+          this.view.setFigureImage(i, url);
+        }
+      }
+    })();
+  }
+
+  /** Renders the chosen page area as a PNG and stores it as an image annotation. */
+  private async createImageFromArea(page: number, rect: Rect): Promise<void> {
+    if (rect[2] < 6 || rect[3] < 6) return;
+    const frame = await this.renderArea(page, rect, Math.min(4, Math.max(2, 900 / Math.max(rect[2], rect[3]))));
+    if (!frame || this.disposed) return this.d.host.notify("Could not capture the area.");
+    const blob = await this.view.encodePng(frame.bytes, frame.width, frame.height);
+    if (!blob) return this.d.host.notify("Could not capture the area.");
+    const draft = buildImage({ color: this.d.settings.get().color, pageIndex: page, pageLabel: String(page + 1), pageRect: rect, page: this.pages[page]! });
+    try {
+      const key = await this.d.annotations.create(draft, blob);
+      this.imageUrls.set(key, this.view.blobUrl(blob));
+      this.renderAnnotationList();
+    } catch (e) {
+      this.d.debug(`[fast-reader] could not save image annotation: ${e}`);
+      this.d.host.notify("Could not save the image annotation.");
+    }
+  }
+
+  /** Loads the cached picture of image annotations that the sidebar is about to show. */
+  private loadAnnotationImages(): void {
+    for (const a of this.annotations) {
+      if (a.kind !== "image" || this.imageUrls.has(a.key) || this.imageLoading.has(a.key)) continue;
+      const path = this.d.annotations.imagePath(a.key);
+      if (!path) continue;
+      this.imageLoading.add(a.key);
+      void this.d
+        .readFile(path)
+        .then((bytes) => {
+          this.imageUrls.set(a.key, this.view.blobUrl(new Blob([bytes.slice().buffer as ArrayBuffer], { type: "image/png" })));
+          if (!this.disposed) this.renderAnnotationList();
+        })
+        .catch(() => {})
+        .finally(() => this.imageLoading.delete(a.key));
+    }
+  }
+
   private showAnnotationPopup(a: AnnotationRecord, clientX: number, clientY: number): void {
     this.view.showAnnotationPopup(clientX, clientY, a, {
       color: (hex) => void this.d.annotations.update(a.key, { color: hex }),
@@ -1129,9 +1368,11 @@ export class ReaderTab {
 
   private setSidebarTab(tab: SidebarTab): void {
     this.view.setSidebarTab(tab);
+    if (tab !== "images") this.dropFigureImages();
     this.d.settings.set({ sidebarTab: tab });
     if (tab === "thumbnails") this.buildThumbnails();
     else if (tab === "annotations") this.renderAnnotationList();
+    else if (tab === "images") this.showFigures();
     else {
       if (this.outline) this.view.renderOutline(this.outline);
       else void this.conn.send({ cmd: "outline" });

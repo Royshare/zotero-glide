@@ -11,7 +11,7 @@
  */
 
 import { ANNOTATION_COLORS } from "./annotations.ts";
-import { createIcon, type IconName } from "./icons.ts";
+import { createGlideMark, createIcon, type IconName } from "./icons.ts";
 import type { Layout } from "./layout.ts";
 import type { OutlineNode, Rect } from "./protocol.ts";
 
@@ -32,9 +32,11 @@ export interface OverlayItem {
 
 export interface SidebarAnnotation {
   key: string;
-  kind: "highlight" | "underline" | "note";
+  kind: "highlight" | "underline" | "note" | "image" | "text" | "ink";
   color: string;
   text: string;
+  /** object URL of the cropped picture (image annotations) */
+  image?: string;
   comment: string;
   pageLabel: string;
   page: number;
@@ -294,6 +296,9 @@ export class ReaderView {
 
     // ---- toolbar (mirrors Zotero's reader: sidebar/navigation/zoom left, tools centre, find + view right)
     const bar = el("div", "fr-bar", undefined, this.root);
+    const brand = el("span", "fr-brand", undefined, bar);
+    brand.title = "Zotero Glide: a fast reader plugin for Zotero";
+    brand.append(createGlideMark(doc, 16), doc.createTextNode("Glide"));
     const left = el("div", "fr-grp", undefined, bar);
     btn("panel-left", "Toggle sidebar", () => ev.toggleSidebar(), left);
     el("span", "fr-sep", undefined, left);
@@ -320,7 +325,7 @@ export class ReaderView {
 
     el("span", "fr-grow", undefined, bar);
     const mid = el("div", "fr-grp", undefined, bar);
-    const tool = (id: "highlight" | "underline" | "note", icon: IconName, title: string) => {
+    const tool = (id: "highlight" | "underline" | "note" | "image", icon: IconName, title: string) => {
       const b = btn(icon, title, () => ev.setTool(b.getAttribute("aria-pressed") === "true" ? null : id), mid);
       b.setAttribute("aria-pressed", "false");
       this.toolButtons.set(id, b);
@@ -328,6 +333,7 @@ export class ReaderView {
     tool("highlight", "highlighter", "Highlight text");
     tool("underline", "underline", "Underline text");
     tool("note", "sticky-note", "Add note");
+    tool("image", "image", "Select area");
     const colorBtn = el("button", "fr-btn", undefined, mid);
     colorBtn.title = "Annotation color";
     this.colorDot = el("span", "fr-color-dot", undefined, colorBtn);
@@ -370,6 +376,7 @@ export class ReaderView {
     sideTab("thumbnails", "layout-grid", "Thumbnails");
     sideTab("annotations", "message-square", "Annotations");
     sideTab("outline", "list", "Outline");
+    sideTab("images", "image", "Images");
     this.sideBody = el("div", "fr-side-body", undefined, side);
     this.sideBody.addEventListener("scroll", () => ev.sidebarScrolled());
 
@@ -466,7 +473,7 @@ export class ReaderView {
   }
   setTool(tool: Tool): void {
     for (const [id, b] of this.toolButtons) b.setAttribute("aria-pressed", String(id === tool));
-    this.scroller.style.cursor = tool === "note" ? "crosshair" : "";
+    this.scroller.style.cursor = tool === "note" || tool === "image" ? "crosshair" : "";
   }
   setColor(hex: string): void {
     this.colorDot.style.background = hex;
@@ -611,6 +618,27 @@ export class ReaderView {
       }
       ov.append(d);
     }
+  }
+
+  /** PNG-encodes an RGBA bitmap in the reader's window (Zotero stores area annotations as PNG). */
+  encodePng(rgba: Uint8Array, width: number, height: number): Promise<Blob | null> {
+    const c = this.doc.createElementNS(XHTML, "canvas") as HTMLCanvasElement;
+    c.width = width;
+    c.height = height;
+    const ImageDataCtor = (this.win as unknown as { ImageData: typeof ImageData }).ImageData;
+    c.getContext("2d")?.putImageData(new ImageDataCtor(new Uint8ClampedArray(rgba.slice().buffer as ArrayBuffer), width, height), 0, 0);
+    return new Promise((resolve) => c.toBlob((b) => resolve(b), "image/png"));
+  }
+  /** The bytes behind an object URL made by `blobUrl`. */
+  async urlBytes(url: string): Promise<Uint8Array> {
+    const r = await (this.win as unknown as { fetch: typeof fetch }).fetch(url);
+    return new Uint8Array(await r.arrayBuffer());
+  }
+  revokeUrl(url: string): void {
+    (this.win as unknown as { URL: typeof URL }).URL.revokeObjectURL(url);
+  }
+  blobUrl(blob: Blob): string {
+    return (this.win as unknown as { URL: typeof URL }).URL.createObjectURL(blob);
   }
 
   setCursor(cursor: string): void {
@@ -857,6 +885,12 @@ export class ReaderView {
       meta.className = "fr-ann-meta";
       meta.textContent = `${a.kind[0]!.toUpperCase()}${a.kind.slice(1)} · page ${a.pageLabel || a.page + 1}`;
       card.append(meta);
+      if (a.image) {
+        const img = this.doc.createElementNS(XHTML, "img") as HTMLImageElement;
+        img.src = a.image;
+        img.draggable = false;
+        card.append(img);
+      }
       if (a.text) {
         const t = this.doc.createElementNS(XHTML, "div") as HTMLElement;
         t.className = "fr-ann-text";
@@ -899,6 +933,58 @@ export class ReaderView {
       this.sideBody.append(card);
     }
   }
+
+  /** The Images sidebar tab: one placeholder per figure (`aspect` = height/width), grouped under page numbers. */
+  renderFigures(items: Array<{ page: number; aspect: number }>, onClick: (i: number) => void, onMenu: (i: number, x: number, y: number) => void = () => {}, onSaveAll: () => void = () => {}): void {
+    this.sideBody.replaceChildren();
+    this.thumbEls = [];
+    this.figEls = [];
+    if (!items.length) {
+      const e = this.doc.createElementNS(XHTML, "div") as HTMLElement;
+      e.className = "fr-empty";
+      e.textContent = "No images in this document.";
+      this.sideBody.append(e);
+      return;
+    }
+    const wrap = this.doc.createElementNS(XHTML, "div") as HTMLElement;
+    wrap.className = "fr-figs";
+    const saveAll = this.doc.createElementNS(XHTML, "button") as HTMLButtonElement;
+    saveAll.className = "fr-btn fr-figs-save";
+    saveAll.append(createIcon(this.doc, "download", 14), this.doc.createTextNode(`Save all images (${items.length})…`));
+    saveAll.addEventListener("click", onSaveAll);
+    wrap.append(saveAll);
+    let lastPage = -1;
+    items.forEach((it, i) => {
+      if (it.page !== lastPage) {
+        const h = this.doc.createElementNS(XHTML, "div") as HTMLElement;
+        h.className = "fr-fig-page";
+        h.textContent = String(it.page + 1);
+        wrap.append(h);
+        lastPage = it.page;
+      }
+      const f = this.doc.createElementNS(XHTML, "div") as HTMLElement;
+      f.className = "fr-fig";
+      f.style.aspectRatio = String(1 / Math.max(0.05, it.aspect));
+      f.addEventListener("click", () => onClick(i));
+      f.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onMenu(i, e.clientX, e.clientY);
+      });
+      wrap.append(f);
+      this.figEls.push(f);
+    });
+    this.sideBody.append(wrap);
+  }
+  setFigureImage(i: number, url: string): void {
+    const f = this.figEls[i];
+    if (!f) return;
+    const img = this.doc.createElementNS(XHTML, "img") as HTMLImageElement;
+    img.src = url;
+    img.draggable = false;
+    f.replaceChildren(img);
+  }
+  private figEls: HTMLElement[] = [];
 
   renderOutline(items: OutlineNode[]): void {
     this.sideBody.replaceChildren();

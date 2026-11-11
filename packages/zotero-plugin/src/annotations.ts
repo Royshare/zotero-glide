@@ -155,6 +155,30 @@ export function buildNote(i: NoteInput): AnnotationDraft {
   };
 }
 
+export interface ImageInput {
+  comment?: string;
+  color: string;
+  pageIndex: number;
+  pageLabel: string;
+  /** the selected area, page space [x, y, w, h] */
+  pageRect: Rect;
+  page: PageInfo;
+}
+
+/** An area ("image") annotation; the bitmap itself is stored separately in Zotero's annotation cache. */
+export function buildImage(i: ImageInput): AnnotationDraft {
+  const rects = pageRectsToPdf([i.pageRect], i.page.m);
+  return {
+    type: "image",
+    comment: i.comment ?? "",
+    color: i.color,
+    pageLabel: i.pageLabel,
+    sortIndex: sortIndex(i.pageIndex, 0, rects, i.page),
+    position: { pageIndex: i.pageIndex, rects },
+    tags: [],
+  };
+}
+
 /** Parses Zotero's stored position JSON defensively (a malformed one must not break rendering the page). */
 export function parsePosition(json: string): AnnotationPosition | null {
   try {
@@ -173,6 +197,7 @@ export function parsePosition(json: string): AnnotationPosition | null {
 export function overlayStyle(kind: AnnotationKind, hex: string): { background?: string; borderBottom?: string; opacity: number } {
   if (kind === "highlight") return { background: hex, opacity: 0.4 };
   if (kind === "underline") return { borderBottom: `2px solid ${hex}`, opacity: 1 };
+  if (kind === "image") return { opacity: 1 };
   return { background: hex, opacity: 0.9 };
 }
 
