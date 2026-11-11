@@ -61,6 +61,8 @@ export interface TextLineData {
   t: string;
   /** `t.length + 1`-ish boundaries: char i spans x[i]..x[i+1]. (Indexed by code point, see textModel.) */
   x: number[];
+  /** superscript digit runs (citation markers) as [from, to) code-point ranges; absent from older helpers */
+  s?: Array<[number, number]>;
 }
 
 export interface OutlineNode {
@@ -74,6 +76,8 @@ export interface LinkData {
   r: Rect;
   p: number | null;
   u: string | null;
+  /** where on the destination page it points, [left, top] in PDF space; absent from older helpers */
+  d?: [number, number] | null;
 }
 
 export type HelperEvent =

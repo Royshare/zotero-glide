@@ -386,6 +386,8 @@ export class ReaderView {
     this.readingArticle = el("article", undefined, undefined, this.reading);
 
     this.popup = el("div", "fr-popup", undefined, this.root);
+    this.popup.addEventListener("mouseenter", () => (this.popupOver = true));
+    this.popup.addEventListener("mouseleave", () => (this.popupOver = false));
     this.message = el("div", "fr-msg", "Opening…", this.root);
 
     // ---- events
@@ -663,7 +665,39 @@ export class ReaderView {
     this.popup.style.top = `${top}px`;
   }
 
+  /** The mouse is over the popup (so a hover popup must not close under it). */
+  popupOver = false;
+
+  /** The reference(s) a citation points to, shown while the mouse rests on it. */
+  showCitationPopup(clientX: number, clientY: number, items: Array<{ label: string; text: string }>, go: (i: number) => void, onMenu: (i: number, x: number, y: number) => void = () => {}): void {
+    this.hidePopups();
+    const list = this.doc.createElementNS(XHTML, "div") as HTMLElement;
+    list.className = "fr-cite-list";
+    items.forEach((it, i) => {
+      const row = this.doc.createElementNS(XHTML, "div") as HTMLElement;
+      row.className = "fr-cite";
+      const n = this.doc.createElementNS(XHTML, "span") as HTMLElement;
+      n.className = "fr-cite-n";
+      n.textContent = it.label;
+      row.append(n, this.doc.createTextNode(it.text || "(reference not found)"));
+      row.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this.hidePopups();
+        go(i);
+      });
+      row.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onMenu(i, e.clientX, e.clientY);
+      });
+      list.append(row);
+    });
+    this.popup.append(list);
+    this.placePopup(clientX, clientY);
+  }
+
   hidePopups(): void {
+    this.popupOver = false;
     this.popup.dataset.open = "false";
     this.popup.replaceChildren();
     this.popup.classList.remove("fr-menu");

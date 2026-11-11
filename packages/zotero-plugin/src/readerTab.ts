@@ -27,6 +27,13 @@ import { keyToAction } from "./readerKeys.ts";
 import {
   charOffsetOnPage, codePoints, hitTest, selectionRects, selectionText, wordRange, type PageText, type TextPos,
 } from "./textModel.ts";
+import { citationRect, citationsInLine, findReferenceStart, looksLikeCitationLabel, numberedEntryY, parseReferences, referenceAt, singleNumber, textInRect, type Citation, type RefEntry } from "./citations.ts";
+
+interface CiteItem {
+  label: string;
+  text: string;
+  go(): void;
+}
 import { ReaderView, type MenuItem, type OverlayItem, type PagePointer, type PageTheme, type SidebarTab, type Tool } from "./tabView.ts";
 
 /** Custom Zotero tab type. NO dash: Zotero splits tab types on "-" (`parseTabType`). */
@@ -227,6 +234,16 @@ export class ReaderTab {
   private textPending = new Set<number>();
   private textWaiters: Array<() => void> = [];
   private links = new Map<number, LinkData[]>();
+  // citations -> reference list
+  private refs: Map<number, RefEntry> | null = null;
+  private refsState: "idle" | "loading" | "done" = "idle";
+  private citeCache = new Map<number, Array<{ c: Citation; rect: Rect }>>();
+  private citeShowTimer: number | null = null;
+  private citeHideTimer: number | null = null;
+  private citeKey: string | null = null;
+  private images = new Map<number, Rect[]>();
+  private imagesPending = new Set<number>();
+  private imagesAtDraw = new Map<number, boolean>();
   private linksPending = new Set<number>();
   private search: SearchState | null = null;
   private selection: { anchor: TextPos; focus: TextPos } | null = null;
@@ -650,6 +667,8 @@ export class ReaderTab {
     for (let p = vFirst; p <= vLast; p++) {
       this.ensureText(p);
       this.ensureLinks(p);
+      this.ensureImages(p);
+      if (this.refsState === "idle") this.d.setTimeout(() => void this.ensureReferences(), 1200);
     }
     this.pruneTexts(vFirst, vLast);
     this.refreshOverlaysFor(vFirst, vLast);
@@ -702,6 +721,167 @@ export class ReaderTab {
     if (this.texts.has(page) || this.textPending.has(page)) return;
     this.textPending.add(page);
     void this.conn.send({ cmd: "text", page });
+  }
+
+  /** Finds the numbered reference list in the last pages (once), so citations can be resolved. */
+  private async ensureReferences(): Promise<void> {
+    if (this.refsState !== "idle" || !this.pages.length) return;
+    this.refsState = "loading";
+    const n = this.pages.length;
+    const idx = Array.from({ length: Math.min(n, 16) }, (_, i) => n - Math.min(n, 16) + i);
+    await this.loadTexts(idx);
+    const pages = idx.filter((p) => this.texts.has(p)).map((p) => ({ page: p, text: this.texts.get(p)! }));
+    const start = findReferenceStart(pages);
+    this.refs = start ? parseReferences(pages, start) : new Map();
+    this.refsState = "done";
+    this.citeCache.clear();
+  }
+
+  private citationsOnPage(page: number): Array<{ c: Citation; rect: Rect }> {
+    const hit = this.citeCache.get(page);
+    if (hit) return hit;
+    const text = this.texts.get(page);
+    if (!text || !this.refs?.size) return [];
+    const out: Array<{ c: Citation; rect: Rect }> = [];
+    text.lines.forEach((l, i) => {
+      for (const c of citationsInLine(l, i)) {
+        if (!c.nums.some((n) => this.refs!.has(n))) continue;
+        const rect = citationRect(l, c);
+        if (rect) out.push({ c, rect });
+      }
+    });
+    this.citeCache.set(page, out);
+    return out;
+  }
+
+  private citationAt(page: number, x: number, y: number): { c: Citation; rect: Rect } | null {
+    return this.citationsOnPage(page).find(({ rect: r }) => x >= r[0] - 1.5 && x <= r[0] + r[2] + 1.5 && y >= r[1] - 1.5 && y <= r[1] + r[3] + 1.5) ?? null;
+  }
+
+  /** Right-click on an entry of the citation popup. */
+  private showReferenceMenu(item: CiteItem, x: number, y: number): void {
+    if (this.citeHideTimer) this.d.clearTimeout(this.citeHideTimer), (this.citeHideTimer = null);
+    this.citeKey = null;
+    this.view.showMenuAt(x, y, [
+      { label: "Copy reference", icon: "copy", disabled: !item.text, run: () => this.d.host.copyText(item.text) },
+      { label: "Copy reference with number", icon: "copy", disabled: !item.text, run: () => this.d.host.copyText(`${item.label.replace(/[\[\]]/g, "")}. ${item.text}`) },
+      { separator: true, label: "" },
+      { label: "Go to reference", icon: "book-open", run: item.go },
+    ]);
+  }
+
+  private scrollToPageY(page: number, y: number): void {
+    if (!this.pages[page]) return;
+    const v = this.pxRect(page, [0, Math.max(0, y - 6), 1, 1]);
+    this.view.scroller.scrollTop = Math.max(0, this.layout.tops[page]! + v[1] - this.view.viewport.height / 4);
+    this.onScrolled(true);
+  }
+
+  private goToReference(n: number): void {
+    const e = this.refs?.get(n);
+    if (e) this.scrollToPageY(e.page, e.y);
+  }
+
+  /** Page-space y of the spot an internal link points at, if the file says (and it is a real position). */
+  private linkDestY(link: LinkData): number | null {
+    const info = link.p === null ? undefined : this.pages[link.p];
+    if (!info || !link.d || !(link.d[1] > 0)) return null;
+    const y = applyMatrix(info.m, link.d[0], link.d[1])[1];
+    return y > 0 && y < info.h ? y : null;
+  }
+
+  /**
+   * Where a PDF link to a reference really lands. A numbered label ("15", "[15]") is looked up in the destination
+   * page's own numbering, which is exact; the destination's coordinates are only a fallback because some files
+   * (here: hyperref anchors) put them far from the entry.
+   */
+  private async resolveLink(page: number, link: LinkData): Promise<{ page: number; y: number; text: string } | null> {
+    if (link.p === null) return null;
+    await this.loadTexts([link.p]);
+    const text = this.texts.get(link.p);
+    const n = singleNumber(textInRect(this.texts.get(page) ?? { lines: [] }, link.r));
+    let y: number | null = null;
+    let at = link.p;
+    if (text && n !== null) y = numberedEntryY(text, n);
+    if (y === null && n !== null) {
+      for (const q of [link.p + 1, link.p - 1]) {
+        if (q < 0 || q >= this.pages.length) continue;
+        await this.loadTexts([q]);
+        const t = this.texts.get(q);
+        const yy = t ? numberedEntryY(t, n) : null;
+        if (yy !== null) (y = yy), (at = q);
+      }
+    }
+    if (y === null) y = this.linkDestY(link);
+    if (y === null) return null;
+    const t = this.texts.get(at);
+    return { page: at, y, text: (t && referenceAt(t, y)) || "" };
+  }
+
+  /** What hovering a citation shows: numbered markers resolve through the reference list, PDF links through their destination. */
+  private citeTargetAt(page: number, x: number, y: number): { key: string; items: () => Promise<CiteItem[]> } | null {
+    const cite = this.tool ? null : this.citationAt(page, x, y);
+    if (cite) {
+      return {
+        key: `${page}:${cite.c.line}:${cite.c.from}`,
+        items: async () => cite.c.nums.slice(0, 12).map((n) => ({ label: String(n), text: this.refs?.get(n)?.text ?? "", go: () => this.goToReference(n) })),
+      };
+    }
+    const link = this.tool ? null : this.linkAt(page, x, y);
+    if (!link || link.p === null) return null;
+    const label = textInRect(this.texts.get(page) ?? { lines: [] }, link.r);
+    if (!looksLikeCitationLabel(label)) return null;
+    return {
+      key: `L${page}:${link.r[0]}:${link.r[1]}`,
+      items: async () => {
+        const r = await this.resolveLink(page, link);
+        return [{ label, text: r?.text ?? "", go: () => (r ? this.scrollToPageY(r.page, r.y) : this.followLink(link, page)) }];
+      },
+    };
+  }
+
+  private onCitationHover(target: { key: string; items: () => Promise<CiteItem[]> } | null, clientX: number, clientY: number): void {
+    if (target) {
+      if (this.citeHideTimer) this.d.clearTimeout(this.citeHideTimer), (this.citeHideTimer = null);
+      if (this.citeKey === target.key) return;
+      if (this.citeShowTimer) this.d.clearTimeout(this.citeShowTimer);
+      this.citeShowTimer = this.d.setTimeout(() => {
+        this.citeShowTimer = null;
+        void target.items().then((items) => {
+          if (this.disposed || this.citeShowTimer !== null) return;
+          this.citeKey = target.key;
+          this.view.showCitationPopup(clientX, clientY + 8, items, (i) => items[i]!.go(), (i, x, y) => this.showReferenceMenu(items[i]!, x, y));
+        });
+      }, 220);
+      return;
+    }
+    if (this.citeShowTimer) this.d.clearTimeout(this.citeShowTimer), (this.citeShowTimer = null);
+    if (this.citeKey && !this.citeHideTimer) {
+      this.citeHideTimer = this.d.setTimeout(() => {
+        this.citeHideTimer = null;
+        if (this.view.popupOver) return;
+        this.citeKey = null;
+        this.view.hidePopups();
+      }, 350);
+    }
+  }
+
+  private ensureImages(page: number): void {
+    if (this.view.themeNow !== "dark" || this.images.has(page) || this.imagesPending.has(page)) return;
+    this.imagesPending.add(page);
+    void this.conn.send({ cmd: "images", page });
+  }
+
+  /** The page's raster images as bitmap pixels, for a frame of the given width. */
+  private imageRectsPx(page: number, frameWidth: number): Rect[] {
+    const info = this.pages[page];
+    const rects = this.images.get(page);
+    if (!info || !rects?.length) return [];
+    const f = frameWidth / viewSize(info, this.settings).w;
+    return rects.map((r) => {
+      const v = rectToView(info, this.settings, r);
+      return [v[0] * f, v[1] * f, v[2] * f, v[3] * f] as Rect;
+    });
   }
 
   private ensureLinks(page: number): void {
@@ -840,8 +1020,21 @@ export class ReaderTab {
 
     if (e.type === "move" && !this.drag) {
       if (!pt) return;
-      const over = this.linkAt(page, pt.x, pt.y) || this.annotationAt(page, pt.x, pt.y);
-      this.view.setCursor(over ? "pointer" : this.tool === "note" ? "crosshair" : "");
+      const cite = this.tool ? null : this.citationAt(page, pt.x, pt.y);
+      const over = this.linkAt(page, pt.x, pt.y) || this.annotationAt(page, pt.x, pt.y) || cite;
+      const target = this.citeTargetAt(page, pt.x, pt.y);
+      this.view.setCursor(over ? "pointer" : this.tool === "note" || this.tool === "image" ? "crosshair" : "");
+      this.onCitationHover(target, e.clientX, e.clientY);
+      return;
+    }
+
+    if (e.type === "contextmenu") {
+      if (!pt) return;
+      const ann = this.annotationAt(page, pt.x, pt.y);
+      if (!ann) return;
+      e.preventDefault?.();
+      this.view.hidePopups();
+      this.showAnnotationMenu(ann.key, e.clientX, e.clientY);
       return;
     }
 
@@ -895,7 +1088,13 @@ export class ReaderTab {
           const ann = this.annotationAt(page, pt.x, pt.y);
           if (ann) return this.showAnnotationPopup(ann, e.clientX, e.clientY);
           const link = this.linkAt(page, pt.x, pt.y);
-          if (link) return this.followLink(link);
+          if (link) return this.followLink(link, page);
+          const cite = this.tool ? null : this.citationAt(page, pt.x, pt.y);
+          if (cite) {
+            this.view.hidePopups();
+            this.citeKey = null;
+            return this.goToReference(cite.c.nums.find((n) => this.refs?.has(n)) ?? cite.c.nums[0]!);
+          }
         }
         return this.clearSelection();
       }
@@ -912,8 +1111,11 @@ export class ReaderTab {
     void this.autoScrollTimer;
   }
 
-  private followLink(link: LinkData): void {
-    if (link.p !== null) this.goToPage(link.p);
+  private followLink(link: LinkData, page: number): void {
+    if (link.p !== null) {
+      const dest = link.p;
+      void this.resolveLink(page, link).then((r) => (r ? this.scrollToPageY(r.page, r.y) : this.goToPage(dest)));
+    }
     else if (link.u) this.d.host.openURL(link.u);
   }
 
