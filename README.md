@@ -26,8 +26,9 @@ that hypothesis so far, and what hasn't.
 ## What this is not
 
 - Not a replacement for Zotero's built-in PDF.js reader.
-- Not an annotation tool -- no annotation creation, editing, or sync.
-  Fast Reader reads; Zotero remains the only place you annotate.
+- Not a separate annotation system: highlights, underlines and notes you make
+  here are stored in **Zotero** (the same way Zotero's own reader stores them), so
+  they sync and appear in both readers. The PDF file itself is never modified.
 - Not a general-purpose PDF application. No PDF editing, no cloud sync, no
   AI features, no note-taking UI.
 - Not a fork or monkey-patch of Zotero's reader internals -- the plugin
@@ -126,12 +127,23 @@ Keyboard (standalone window): `PageDown`/`Right`/`Space` next page,
 `Ctrl/Cmd+F` search (`Enter` next hit, `Shift+Enter` previous),
 `Ctrl/Cmd+G` go to page, `Esc` close search/goto or quit.
 
-Keyboard (tab): `←`/`→` previous/next page; `Space`/`PageDown` scroll the
-page and flip to the next page once at the bottom (`Shift+Space`/`PageUp`
-likewise upward); `Home`/`End` first/last page; `+`/`-` or pinch /
-`Ctrl/Cmd`+wheel zoom; `1` fit width, `2` fit page; `Ctrl/Cmd+F` search
-(`Enter` next hit, `Shift+Enter` previous, `Esc` clear); `Ctrl/Cmd+G` go to
-page. The toolbar has the same controls.
+Keyboard (tab): `←`/`→` previous/next page; arrows, `Space`, `PageUp/Down` scroll;
+`Home`/`End` first/last page; `+`/`-` or pinch / `Ctrl/Cmd`+wheel zoom; `1` fit
+width, `2` fit page; `Ctrl/Cmd+F` find (`Enter` next, `Shift+Enter` previous);
+`Ctrl/Cmd+G` go to page; `Ctrl/Cmd+C` copy the selection; `Ctrl/Cmd+A` select all
+text; `Esc` clears the selection / tool / reading mode.
+
+The tab, in short: continuous scrolling; select text (drag, double-click a word,
+triple-click a line) and copy it; highlight, underline and note annotations with
+Zotero's eight colors; an annotation list, thumbnails and the document outline in
+a sidebar; clickable links; find with highlights; page themes (light / dark / sepia);
+rotate; crop white margins; a reading mode with reflowed text; your place in each PDF
+is remembered. The ⋯ menu also has: copy citation, create a Zotero note from the
+annotations, export a PDF with the annotations embedded (a copy), open in the system
+viewer (to print), and open in Zotero's own reader at the current page.
+Settings (Zotero ▸ Settings ▸ Fast Reader): open PDFs here by default (double-click,
+`zotero://open-pdf` links, note citations), and how long a background tab waits before
+freeing its memory.
 
 Headless (what the tab drives -- JSON lines on stdin, frames written to
 files; protocol in `packages/reader-helper/src/serve.rs`):
@@ -184,7 +196,7 @@ cross-platform binaries are produced.
 | `npm start` | `zotero-plugin serve` -- launch Zotero with the plugin loaded live, hot-reload on save (see above) |
 | `npm run build` | rebuilds the native helper (`prebuild`), then `zotero-plugin build && tsc --noEmit` -- bundles `src/` into `.scaffold/build/zotero-fast-reader.xpi` and type-checks |
 | `npm run typecheck` | `tsc --noEmit` alone |
-| `npm test` | run the 75 pure-logic unit tests -- Node's built-in test runner, running the `.ts` sources directly (Node v26's native type-stripping, no ts-node/jest/babel) |
+| `npm test` | run the 118 pure-logic unit tests -- Node's built-in test runner, running the `.ts` sources directly (Node v26's native type-stripping, no ts-node/jest/babel) |
 | `npm run release` | `zotero-plugin release` -- publish a GitHub release with the built xpi; needs a real git remote + `GITHUB_TOKEN`, not configured for this repo yet |
 
 The plugin's source (`packages/zotero-plugin/src/*.ts`) is real
@@ -196,10 +208,10 @@ section for why bundling replaced the earlier multi-file
 ## Tests executed
 
 ```bash
-(cd packages/reader-helper && cargo test)   # 60 tests: engine, cache, blit pixel math,
+(cd packages/reader-helper && cargo test)   # 86 tests: engine, cache, blit pixel math,
                                              #   session navigation/zoom/search, argv parsing,
                                              #   serve-mode protocol + frames
-(cd packages/zotero-plugin && node --test)  # 75 tests: PDF detection, platform
+(cd packages/zotero-plugin && node --test)  # 118 tests: PDF detection, platform
                                              #   resolution, argv construction, wire protocol,
                                              #   keymap, helper connection (spawn/read/close),
                                              #   missing-executable/spawn-failure handling
@@ -231,26 +243,16 @@ walking a simulated 200-page read and by a real headless benchmark run);
 MuPDF's own separate internal resource store does not plateau as tightly
 for image-heavy documents, and that's documented rather than hidden.
 
-## Remaining v0.2 work
+## What is still open
 
-- A person actually using the tab (real keys, trackpad pinch, tab
-  switching) and a head-to-head memory comparison against Zotero's PDF.js
-  reader on real papers -- STATUS.md's "v0.3" lists what was verified
-  mechanically and what wasn't.
-- Remember last page/zoom per PDF (cheap now: the helper reports `page` on
-  every frame).
-- Robust text selection + copy (deliberately deferred, not attempted as a
-  half-measure -- see `docs/adr/001-*.md`).
-- Continuous scrolling (v0.1 is single-page + navigation by design).
-- Position/zoom persistence and the Zotero↔Fast Reader signaling that
-  would need -- designed but not implemented, see
-  [`docs/future-ipc.md`](docs/future-ipc.md).
-- Windows and Linux builds (only macOS-arm64 has been built and run).
-- Code signing/notarization for real distribution (see
-  `docs/cross-platform.md`).
-- A `LICENSE` file and the licensing decisions in
-  [`docs/licensing.md`](docs/licensing.md) that need to precede any
-  distribution beyond active development.
+- A person actually using the tab (real keys, trackpad pinch, tab switching): STATUS.md lists
+  what was verified mechanically and what wasn't.
+- Image / ink / free-text annotation creation, annotation editing by dragging, OCR (ADR 003).
+- Windows (never built or run) and x86_64 Linux (not run); the CI workflows exist but have not
+  run on GitHub (`docs/cross-platform.md`).
+- Code signing / notarization (`docs/cross-platform.md`).
+- Closing the licensing gaps listed in [`docs/licensing.md`](docs/licensing.md) (libjpeg's
+  license text, a real repository URL for the source offer) before a public release.
 
 ## License
 

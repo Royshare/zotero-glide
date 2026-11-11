@@ -1,6 +1,6 @@
 # ADR 002: the reader as a Zotero tab
 
-Status: Accepted (v0.3)
+Status: Accepted (v0.3); the page model and protocol were superseded by [ADR 003](003-continuous-reader.md) (v0.4)
 Builds on: [ADR 001](001-reader-helper-stack.md) (Rust + MuPDF helper)
 
 ## Context

@@ -2,7 +2,8 @@
 
 ## Current milestone
 
-v0.3 (the reader as a Zotero tab) is implemented and verified live -- see the
+v0.4 (a continuous-scroll reader with selection, annotations and more) is implemented and verified live --
+see the "v0.4" section below for what was and wasn't checked. v0.3 (the reader as a Zotero tab) is implemented and verified live -- see the
 "v0.3" section below for exactly what was and wasn't checked. v0.1's milestones are done (Milestone 3's plugin loading/launching is
 confirmed end-to-end, including bugs a real user's install surfaced that
 earlier dev-mode testing hadn't -- see below). Now in v0.2, two pieces
@@ -99,7 +100,7 @@ Zotero's own process held ~1465 MB; a forced GC took it to ~964 MB. Each page
 is a 10-25 MB buffer Gecko collects lazily. The tab now forces a GC 1.5 s
 after the last frame, and after a background trim or close.
 
-**Memory vs Zotero's PDF.js reader (Zotero 10.0.8, macOS arm64, retina).**
+**Memory vs Zotero's PDF.js reader (Zotero 10.0.8, macOS arm64, retina) -- v0.3's single-page view; superseded for the current reader by the v0.4 table above, whose win is smaller.**
 Fresh Zotero launch per run; metric is the summed `phys_footprint` of the
 whole process tree (Zotero, its Gecko children, and our helper), as a delta
 over that run's own baseline. Same Zotero, same PDFs. Fast Reader = the final
@@ -168,7 +169,7 @@ for an unpacked install, so *neither* open path could find the helper binary.
 Fixed by converting the URI with Gecko's file protocol handler
 (`getFileFromURLSpec`), which works on every version.
 
-Test count: 60 Rust + 75 TypeScript, all passing.
+Test count: 86 Rust + 120 TypeScript, all passing.
 
 ## A third real bug: stale cached extraction after a reinstall
 
