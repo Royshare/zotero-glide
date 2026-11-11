@@ -52,6 +52,10 @@ def settle(root, secs=4):
     time.sleep(secs); return snapshot(root)
 
 def run(paper, att, mode):
+    # a force-killed Zotero leaves lock files that make the next launch exit immediately
+    for lock in ("lock", ".parentlock", "parent.lock"):
+        try: os.remove(f"{PROFILE}/{lock}")
+        except OSError: pass
     subprocess.run([f"{HERE}/zlaunch.sh", APP, PROFILE, DATA, PORT], check=True)
     root = int(open(f"{PROFILE}/pid").read())
     for _ in range(60):
@@ -77,8 +81,8 @@ def run(paper, att, mode):
           const t0 = performance.now();
           await Zotero.FastReader.openInTab(Zotero.Items.get({att}));
           const d = Zotero.getMainWindow().document;
-          while (!(d.querySelector('.fr-root canvas')?.width > 0)) await new Promise(r => setTimeout(r, 5));
-          return JSON.stringify({{ firstPageMs: Math.round(performance.now() - t0), pages: parseInt(d.querySelector('.fr-bar .fr-status').textContent.replace('/ ','')) || null }});""", 90)
+          while (!(d.querySelector('.fr-page canvas')?.width > 0)) await new Promise(r => setTimeout(r, 5));
+          return JSON.stringify({{ firstPageMs: Math.round(performance.now() - t0), pages: parseInt(d.querySelector('.fr-label').textContent.replace('/ ','')) || null }});""", 90)
     o = json.loads(opened); res["firstPageMs"] = o["firstPageMs"]; res["pages"] = o["pages"]
     res["opened"] = settle(root, 5)
     if mode == "pdfjs":
@@ -92,9 +96,13 @@ def run(paper, att, mode):
           return JSON.stringify(lat);""", 180)
     else:
         turns = js("""
-          const w = Zotero.getMainWindow(), d = w.document, pi = d.querySelector('.fr-page'), root = d.querySelector('.fr-root');
-          const total = parseInt(d.querySelector('.fr-bar .fr-status').textContent.replace('/ ', ''));
+          const w = Zotero.getMainWindow(), d = w.document, pi = d.querySelector('.fr-page-input'), root = d.querySelector('.fr-root');
+          const total = parseInt(d.querySelector('.fr-label').textContent.replace('/ ', ''));
           const n = Math.min(30, total - 1), lat = [];
+          // the reader remembers where you were in each PDF: start every run from page 1
+          root.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Home', bubbles: true, cancelable: true }));
+          while (pi.value !== '1') await new Promise(r => setTimeout(r, 20));
+          await new Promise(r => setTimeout(r, 400));
           for (let i = 2; i <= n + 1; i++) {
             const t = performance.now();
             root.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }));
@@ -120,7 +128,7 @@ def run(paper, att, mode):
 
 out = open(f"{S}/{os.environ.get('OUT', 'compare.jsonl')}", "a")
 MODES = os.environ.get("MODES", "pdfjs,fast").split(",")
-for paper, att, mode in [(p, a, m) for rep in range(2) for p, a in PAPERS for m in MODES]:
+for paper, att, mode in [(p, a, m) for rep in range(int(os.environ.get("REPS", "2"))) for p, a in PAPERS for m in MODES]:
     if only and paper not in only: continue
     if True:
         try:
