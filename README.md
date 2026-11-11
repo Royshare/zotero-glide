@@ -1,5 +1,7 @@
 # Zotero Fast Reader (v0.1)
 
+<img src="packages/zotero-plugin/addon/content/icons/zotero-glide.svg" alt="Zotero Glide icon: an open book with a red-tinted right page" width="96" height="96">
+
 A lightweight MuPDF-based reading companion for Zotero.
 
 ## What this is
@@ -248,7 +250,8 @@ for image-heavy documents, and that's documented rather than hidden.
 - A person actually using the tab (real keys, trackpad pinch, tab switching): STATUS.md lists
   what was verified mechanically and what wasn't.
 - Image / ink / free-text annotation creation, annotation editing by dragging, OCR (ADR 003).
-- Windows (never built or run) and x86_64 Linux (not run); the CI workflows exist but have not
+- Windows Zotero UI testing and x86_64 Linux (not run); Windows x64 now builds and
+  passes the native tests and headless PDF smoke test. The CI workflows have not
   run on GitHub (`docs/cross-platform.md`).
 - Code signing / notarization (`docs/cross-platform.md`).
 - Before a public release: make the repository public (or ship the source archive with every
@@ -268,11 +271,11 @@ This software is based in part on the work of the Independent JPEG Group (libjpe
 
 ## Known platform limitations
 
-- Developed and tested only on macOS (Apple Silicon). The engine, cache,
-  and windowing code have no macOS-specific APIs (`winit`/`softbuffer`
-  cover Windows/macOS/Linux uniformly, and MuPDF's build system already
-  supports all three), but Windows/Linux builds have not been produced or
-  run -- see `docs/cross-platform.md` for the intended build matrix.
+- Developed on macOS (Apple Silicon). Windows x64 has also been built and
+  tested with 86 native tests, 120 plugin tests, and a headless PDF smoke test
+  of the helper extracted from the XPI. Manual use inside Zotero on Windows
+  and Linux builds remain unverified -- see `docs/cross-platform.md` for
+  Windows build instructions and the intended build matrix.
 - Accessibility (screen readers) is not supported in v0.1's raw
   `winit`-based UI -- documented as an accepted trade-off in
   `docs/adr/001-*.md`, with `AccessKit` identified as the path if this
