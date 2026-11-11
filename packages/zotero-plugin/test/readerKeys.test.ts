@@ -8,52 +8,43 @@ import { keyToAction, ZOOM_STEP, type KeyContext, type KeyLike } from "../src/re
 const key = (k: string, extra: Partial<KeyLike> = {}): KeyLike => ({
   key: k, shiftKey: false, metaKey: false, ctrlKey: false, altKey: false, ...extra,
 });
-const mid: KeyContext = { isMac: true, atTop: false, atBottom: false };
+const mac: KeyContext = { isMac: true };
 
-test("Space/PageDown only flip pages at the bottom; otherwise they scroll natively (null)", () => {
-  assert.equal(keyToAction(key(" "), mid), null);
-  assert.equal(keyToAction(key("PageDown"), mid), null);
-  assert.deepEqual(keyToAction(key(" "), { ...mid, atBottom: true }), { type: "next" });
-  assert.deepEqual(keyToAction(key("PageDown"), { ...mid, atBottom: true }), { type: "next" });
+test("keys that scroll a continuous page are left to the browser", () => {
+  for (const k of [" ", "PageDown", "PageUp", "ArrowDown", "ArrowUp"]) assert.equal(keyToAction(key(k), mac), null, k);
+  assert.equal(keyToAction(key(" ", { shiftKey: true }), mac), null);
 });
 
-test("Shift+Space / PageUp flip back only at the top and land at the bottom of the previous page", () => {
-  assert.equal(keyToAction(key(" ", { shiftKey: true }), mid), null);
-  assert.deepEqual(keyToAction(key(" ", { shiftKey: true }), { ...mid, atTop: true }), { type: "prev", scroll: "bottom" });
-  assert.deepEqual(keyToAction(key("PageUp"), { ...mid, atTop: true }), { type: "prev", scroll: "bottom" });
-});
-
-test("arrow left/right always change page", () => {
-  assert.deepEqual(keyToAction(key("ArrowRight"), mid), { type: "next" });
-  assert.deepEqual(keyToAction(key("ArrowLeft"), mid), { type: "prev", scroll: "top" });
-  assert.equal(keyToAction(key("ArrowDown"), mid), null, "vertical arrows scroll natively");
+test("arrow left/right jump a page; Home/End go to the ends", () => {
+  assert.deepEqual(keyToAction(key("ArrowRight"), mac), { type: "next" });
+  assert.deepEqual(keyToAction(key("ArrowLeft"), mac), { type: "prev" });
+  assert.deepEqual(keyToAction(key("Home"), mac), { type: "first" });
+  assert.deepEqual(keyToAction(key("End"), mac), { type: "last" });
 });
 
 test("the primary modifier is Cmd on macOS but Ctrl elsewhere", () => {
-  assert.deepEqual(keyToAction(key("f", { metaKey: true }), mid), { type: "focusSearch" });
-  assert.equal(keyToAction(key("f", { ctrlKey: true }), mid), null);
-  const win = { ...mid, isMac: false };
+  assert.deepEqual(keyToAction(key("f", { metaKey: true }), mac), { type: "focusSearch" });
+  assert.equal(keyToAction(key("f", { ctrlKey: true }), mac), null);
+  const win = { isMac: false };
   assert.deepEqual(keyToAction(key("f", { ctrlKey: true }), win), { type: "focusSearch" });
   assert.deepEqual(keyToAction(key("G", { ctrlKey: true }), win), { type: "focusPage" });
+  assert.deepEqual(keyToAction(key("c", { ctrlKey: true }), win), { type: "copy" });
+  assert.deepEqual(keyToAction(key("a", { metaKey: true }), mac), { type: "selectAll" });
 });
 
 test("zoom and fit keys", () => {
-  assert.deepEqual(keyToAction(key("+"), mid), { type: "zoom", factor: ZOOM_STEP });
-  assert.deepEqual(keyToAction(key("="), mid), { type: "zoom", factor: ZOOM_STEP });
-  assert.deepEqual(keyToAction(key("-"), mid), { type: "zoom", factor: 1 / ZOOM_STEP });
-  assert.deepEqual(keyToAction(key("1"), mid), { type: "fit", mode: "width" });
-  assert.deepEqual(keyToAction(key("2"), mid), { type: "fit", mode: "page" });
-  assert.deepEqual(keyToAction(key("=", { metaKey: true }), mid), { type: "zoom", factor: ZOOM_STEP });
+  assert.deepEqual(keyToAction(key("+"), mac), { type: "zoom", factor: ZOOM_STEP });
+  assert.deepEqual(keyToAction(key("="), mac), { type: "zoom", factor: ZOOM_STEP });
+  assert.deepEqual(keyToAction(key("-"), mac), { type: "zoom", factor: 1 / ZOOM_STEP });
+  assert.deepEqual(keyToAction(key("1"), mac), { type: "fit", mode: "width" });
+  assert.deepEqual(keyToAction(key("2"), mac), { type: "fit", mode: "page" });
+  assert.deepEqual(keyToAction(key("=", { metaKey: true }), mac), { type: "zoom", factor: ZOOM_STEP });
+  assert.deepEqual(keyToAction(key("0", { metaKey: true }), mac), { type: "fit", mode: "width" });
 });
 
 test("unrelated modified keys are left to Zotero/the browser", () => {
-  assert.equal(keyToAction(key("w", { metaKey: true }), mid), null, "Cmd+W must still close the tab");
-  assert.equal(keyToAction(key("ArrowRight", { altKey: true }), mid), null);
-  assert.equal(keyToAction(key("a"), mid), null);
-});
-
-test("Home/End/Escape", () => {
-  assert.deepEqual(keyToAction(key("Home"), mid), { type: "first" });
-  assert.deepEqual(keyToAction(key("End"), mid), { type: "last" });
-  assert.deepEqual(keyToAction(key("Escape"), mid), { type: "escape" });
+  assert.equal(keyToAction(key("w", { metaKey: true }), mac), null, "Cmd+W must still close the tab");
+  assert.equal(keyToAction(key("ArrowRight", { altKey: true }), mac), null);
+  assert.equal(keyToAction(key("a"), mac), null);
+  assert.deepEqual(keyToAction(key("Escape"), mac), { type: "escape" });
 });

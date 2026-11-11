@@ -6,8 +6,8 @@ import assert from "node:assert/strict";
 import { encodeCommand, LineSplitter, parseEvent } from "../src/protocol.ts";
 
 test("encodeCommand is one JSON object terminated by exactly one newline", () => {
-  const s = encodeCommand({ cmd: "goto", page: 4 });
-  assert.equal(s, '{"cmd":"goto","page":4}\n');
+  const s = encodeCommand({ cmd: "text", page: 4 });
+  assert.equal(s, '{"cmd":"text","page":4}\n');
   assert.equal(s.split("\n").length, 2);
 });
 

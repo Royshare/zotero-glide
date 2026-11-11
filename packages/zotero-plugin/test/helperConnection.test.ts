@@ -57,8 +57,8 @@ test("sends are written in order, one JSON line each", async () => {
   const f = fakeProc();
   const c = new HelperConnection(f.proc, { onEvent: () => {}, onExit: () => {} });
   c.start();
-  await Promise.all([c.send({ cmd: "next" }), c.send({ cmd: "goto", page: 2 }), c.send({ cmd: "prev" })]);
-  assert.deepEqual(f.written, ['{"cmd":"next"}\n', '{"cmd":"goto","page":2}\n', '{"cmd":"prev"}\n']);
+  await Promise.all([c.send({ cmd: "outline" }), c.send({ cmd: "text", page: 2 }), c.send({ cmd: "margins" })]);
+  assert.deepEqual(f.written, ['{"cmd":"outline"}\n', '{"cmd":"text","page":2}\n', '{"cmd":"margins"}\n']);
 });
 
 test("an unexpected exit is reported as not requested", async () => {
@@ -103,7 +103,7 @@ test("send after close is a silent no-op, and close is idempotent", async () => 
   c.start();
   await tick();
   await c.close();
-  await c.send({ cmd: "next" });
+  await c.send({ cmd: "outline" });
   await c.close();
   assert.deepEqual(f.written, ['{"cmd":"quit"}\n']);
 });

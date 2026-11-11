@@ -1,0 +1,72 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Zotero Fast Reader contributors
+
+/**
+ * Toolbar icons: inlined SVG geometry from Lucide (https://lucide.dev, ISC License; portions Feather, MIT --
+ * see THIRD_PARTY_NOTICES.md). 24x24 viewBox, 2px round strokes, `currentColor` so they follow the theme.
+ * Each icon is a list of [tag, attributes] shapes.
+ */
+
+type Shape = [tag: "path" | "circle" | "line" | "rect" | "polyline", attrs: Record<string, string | number>];
+
+export const ICONS = {
+  "panel-left": [["rect", { width: 18, height: 18, x: 3, y: 3, rx: 2 }], ["path", { d: "M9 3v18" }]],
+  "chevron-left": [["path", { d: "m15 18-6-6 6-6" }]],
+  "chevron-right": [["path", { d: "m9 18 6-6-6-6" }]],
+  "chevron-up": [["path", { d: "m18 15-6-6-6 6" }]],
+  "chevron-down": [["path", { d: "m6 9 6 6 6-6" }]],
+  plus: [["path", { d: "M5 12h14" }], ["path", { d: "M12 5v14" }]],
+  minus: [["path", { d: "M5 12h14" }]],
+  "move-horizontal": [["polyline", { points: "18 8 22 12 18 16" }], ["polyline", { points: "6 8 2 12 6 16" }], ["line", { x1: 2, x2: 22, y1: 12, y2: 12 }]],
+  maximize: [["path", { d: "M8 3H5a2 2 0 0 0-2 2v3" }], ["path", { d: "M21 8V5a2 2 0 0 0-2-2h-3" }], ["path", { d: "M3 16v3a2 2 0 0 0 2 2h3" }], ["path", { d: "M16 21h3a2 2 0 0 0 2-2v-3" }]],
+  search: [["circle", { cx: 11, cy: 11, r: 8 }], ["path", { d: "m21 21-4.3-4.3" }]],
+  highlighter: [["path", { d: "m9 11-6 6v3h9l3-3" }], ["path", { d: "m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4" }]],
+  underline: [["path", { d: "M6 4v6a6 6 0 0 0 12 0V4" }], ["line", { x1: 4, x2: 20, y1: 20, y2: 20 }]],
+  "sticky-note": [["path", { d: "M15.5 3H5a2 2 0 0 0-2 2v14c0 1.1.9 2 2 2h14a2 2 0 0 0 2-2V8.5L15.5 3Z" }], ["path", { d: "M15 3v6h6" }]],
+  copy: [["rect", { width: 14, height: 14, x: 8, y: 8, rx: 2, ry: 2 }], ["path", { d: "M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" }]],
+  trash: [["path", { d: "M3 6h18" }], ["path", { d: "M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" }], ["path", { d: "M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" }], ["line", { x1: 10, x2: 10, y1: 11, y2: 17 }], ["line", { x1: 14, x2: 14, y1: 11, y2: 17 }]],
+  "rotate-cw": [["path", { d: "M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" }], ["path", { d: "M21 3v5h-5" }]],
+  "rotate-ccw": [["path", { d: "M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" }], ["path", { d: "M3 3v5h5" }]],
+  sun: [["circle", { cx: 12, cy: 12, r: 4 }], ["path", { d: "M12 2v2" }], ["path", { d: "M12 20v2" }], ["path", { d: "m4.93 4.93 1.41 1.41" }], ["path", { d: "m17.66 17.66 1.41 1.41" }], ["path", { d: "M2 12h2" }], ["path", { d: "M20 12h2" }], ["path", { d: "m6.34 17.66-1.41 1.41" }], ["path", { d: "m19.07 4.93-1.41 1.41" }]],
+  moon: [["path", { d: "M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" }]],
+  "book-open": [["path", { d: "M12 7v14" }], ["path", { d: "M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z" }]],
+  crop: [["path", { d: "M6 2v14a2 2 0 0 0 2 2h14" }], ["path", { d: "M18 22V8a2 2 0 0 0-2-2H2" }]],
+  download: [["path", { d: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" }], ["polyline", { points: "7 10 12 15 17 10" }], ["line", { x1: 12, x2: 12, y1: 15, y2: 3 }]],
+  printer: [["path", { d: "M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" }], ["path", { d: "M6 9V3a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v6" }], ["rect", { x: 6, y: 14, width: 12, height: 8, rx: 1 }]],
+  list: [["path", { d: "M3 12h.01" }], ["path", { d: "M3 18h.01" }], ["path", { d: "M3 6h.01" }], ["path", { d: "M8 12h13" }], ["path", { d: "M8 18h13" }], ["path", { d: "M8 6h13" }]],
+  "layout-grid": [["rect", { width: 7, height: 7, x: 3, y: 3, rx: 1 }], ["rect", { width: 7, height: 7, x: 14, y: 3, rx: 1 }], ["rect", { width: 7, height: 7, x: 14, y: 14, rx: 1 }], ["rect", { width: 7, height: 7, x: 3, y: 14, rx: 1 }]],
+  "message-square": [["path", { d: "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" }]],
+  more: [["circle", { cx: 12, cy: 12, r: 1 }], ["circle", { cx: 19, cy: 12, r: 1 }], ["circle", { cx: 5, cy: 12, r: 1 }]],
+  x: [["path", { d: "M18 6 6 18" }], ["path", { d: "m6 6 12 12" }]],
+  check: [["path", { d: "M20 6 9 17l-5-5" }]],
+  "external-link": [["path", { d: "M15 3h6v6" }], ["path", { d: "M10 14 21 3" }], ["path", { d: "M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" }]],
+  quote: [["path", { d: "M16 3a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2 1 1 0 0 1 1 1v1a2 2 0 0 1-2 2 1 1 0 0 0-1 1v2a1 1 0 0 0 1 1 6 6 0 0 0 6-6V5a2 2 0 0 0-2-2z" }], ["path", { d: "M5 3a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2 1 1 0 0 1 1 1v1a2 2 0 0 1-2 2 1 1 0 0 0-1 1v2a1 1 0 0 0 1 1 6 6 0 0 0 6-6V5a2 2 0 0 0-2-2z" }]],
+  "file-text": [["path", { d: "M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" }], ["path", { d: "M14 2v4a2 2 0 0 0 2 2h4" }], ["path", { d: "M10 9H8" }], ["path", { d: "M16 13H8" }], ["path", { d: "M16 17H8" }]],
+} satisfies Record<string, Shape[]>;
+
+export type IconName = keyof typeof ICONS;
+
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+/** Builds the `<svg>` element for an icon (size in px). */
+export function createIcon(doc: Document, name: IconName, size = 16): SVGElement {
+  const svg = doc.createElementNS(SVG_NS, "svg");
+  for (const [k, v] of Object.entries({
+    viewBox: "0 0 24 24", width: size, height: size, fill: "none", stroke: "currentColor",
+    "stroke-width": 2, "stroke-linecap": "round", "stroke-linejoin": "round", "aria-hidden": "true",
+  })) svg.setAttribute(k, String(v));
+  for (const [tag, attrs] of ICONS[name] as Shape[]) {
+    const el = doc.createElementNS(SVG_NS, tag);
+    for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, String(v));
+    svg.append(el);
+  }
+  return svg;
+}
+
+/** Static markup for an icon, used by the icon gallery page and tests. */
+export function iconMarkup(name: IconName, size = 24): string {
+  const shapes = (ICONS[name] as Shape[])
+    .map(([tag, a]) => `<${tag} ${Object.entries(a).map(([k, v]) => `${k}="${v}"`).join(" ")}/>`)
+    .join("");
+  return `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${shapes}</svg>`;
+}

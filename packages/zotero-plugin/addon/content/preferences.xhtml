@@ -1,0 +1,34 @@
+<!--
+  SPDX-License-Identifier: AGPL-3.0-or-later
+  Copyright (C) 2026 Zotero Fast Reader contributors
+
+  Preferences pane fragment for Zotero's Settings window (registered in src/fastReader.ts via
+  Zotero.PreferencePanes.register). `preference` attributes bind each control to its pref directly.
+-->
+<vbox id="fast-reader-prefpane">
+	<vbox class="main-section">
+		<groupbox>
+			<label><html:h2>Fast Reader</html:h2></label>
+
+			<checkbox id="fast-reader-default-opener"
+				label="Open PDFs in Fast Reader instead of Zotero's reader"
+				preference="extensions.zotero.fastReader.defaultOpener"/>
+			<description class="preference-description">
+				Applies to double-clicking a PDF, "View PDF", and zotero://open-pdf links such as the page links
+				in notes. Zotero's reader stays one click away in the reader's menu, and annotations are shared
+				between the two readers.
+			</description>
+
+			<hbox align="center">
+				<label value="Free a background tab's memory after" control="fast-reader-trim-delay"/>
+				<html:input type="number" id="fast-reader-trim-delay" min="1" max="600" step="1" style="width: 5em"
+					preference="extensions.zotero.fastReader.trimDelaySeconds"/>
+				<label value="seconds"/>
+			</hbox>
+			<description class="preference-description">
+				A reader tab you aren't looking at drops its rendered pages (back to a few MB) and re-renders what
+				is visible when you return.
+			</description>
+		</groupbox>
+	</vbox>
+</vbox>

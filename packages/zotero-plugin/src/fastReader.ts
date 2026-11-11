@@ -40,7 +40,9 @@ import { resolvePdfAttachment, tabTitleForItem, type PdfLikeItem } from "./pdfAt
 import { launchFastReader } from "./launchFastReader.ts";
 import { buildServeArgs, helperEnvironment, type DockGeometry } from "./buildArgs.ts";
 import type { HelperProcess } from "./helperConnection.ts";
-import { ReaderTab, TAB_TYPE, type ZoteroTabs } from "./readerTab.ts";
+import { ReaderTab, TAB_TYPE, type HostActions, type ZoteroTabs } from "./readerTab.ts";
+import { PositionStore } from "./positionStore.ts";
+import { createAnnotationBackend, createSettingsStore, parseTrimDelayMs, readerLocation, type AttachmentApi } from "./zoteroAdapters.ts";
 import { withoutTabType, type SessionTab } from "./sessionState.ts";
 
 type LibraryMenuContext = _ZoteroTypes.MenuManager.LibraryMenuContext;
@@ -66,6 +68,12 @@ interface TabsWindow {
   document: Document;
 }
 
+/** The bits of a Zotero attachment item this plugin touches directly. */
+interface ZItem {
+  id: number;
+  parentItemID?: number | false;
+}
+
 const MENU_ID = "fast-reader-open";
 const MENU_ID_WINDOW = "fast-reader-open-window";
 const OBSERVER_ID = "fast-reader-tabs";
@@ -79,6 +87,8 @@ class FastReaderPlugin {
   private subprocessModule: SubprocessModule | null = null;
   private readerTabs = new Set<ReaderTab>();
   private originalGetState: (() => SessionTab[]) | null = null;
+  private _originalReaderOpen: ((...a: unknown[]) => Promise<unknown>) | null = null;
+  private _bypassReaderPatch = false;
   private notifierID: string | null = null;
 
   init({ id, version, rootURI }: { id: string; version: string; rootURI: string }): void {
@@ -88,12 +98,15 @@ class FastReaderPlugin {
   }
 
   addToAllWindows(): void {
+    this._registerPrefs();
     this._registerMenu();
     this._registerTabSupport(Zotero.getMainWindow() as unknown as TabsWindow | null);
+    this._patchReaderOpen();
   }
 
   removeFromAllWindows(): void {
     this._unregisterMenu();
+    this._unpatchReaderOpen();
     this._unregisterTabSupport();
   }
 
@@ -107,6 +120,21 @@ class FastReaderPlugin {
     this._registerTabSupport(window as unknown as TabsWindow);
   }
   removeFromWindow(_window: Window): void {}
+
+  /** Default values and the pane in Zotero's Settings window (Tools > Settings > Fast Reader). */
+  private _registerPrefs(): void {
+    try {
+      const defaults = Services.prefs.getDefaultBranch("extensions.zotero.");
+      defaults.setBoolPref("fastReader.defaultOpener", false);
+      defaults.setIntPref("fastReader.trimDelaySeconds", 2);
+      const panes = (Zotero as unknown as { PreferencePanes?: { register(o: Record<string, unknown>): Promise<string> } }).PreferencePanes;
+      if (panes && this.id && this.rootURI) {
+        void panes.register({ pluginID: this.id, src: this.rootURI + "content/preferences.xhtml", label: "Fast Reader" });
+      }
+    } catch (e) {
+      Zotero.debug(`[fast-reader] could not register preferences: ${e}`);
+    }
+  }
 
   private _registerMenu(): void {
     if (!Zotero.MenuManager || typeof Zotero.MenuManager.registerMenu !== "function") {
@@ -278,7 +306,7 @@ class FastReaderPlugin {
    * Spawns a per-tab headless helper (`--serve`); closing the tab ends it.
    * Re-opening a PDF that already has a reader tab just selects that tab.
    */
-  async openInTab(item: PdfLikeItem): Promise<void> {
+  async openInTab(item: PdfLikeItem, loc: { pageIndex?: number; annotationKey?: string } = {}): Promise<void> {
     let proc: SubprocessHandle | null = null;
     let frameDir: string | null = null;
     try {
@@ -295,7 +323,7 @@ class FastReaderPlugin {
 
       for (const open of this.readerTabs) {
         if (open.pdfPath === pdfPath) {
-          open.select();
+          open.reveal(loc);
           return;
         }
       }
@@ -331,6 +359,8 @@ class FastReaderPlugin {
         setTimeout: (fn, ms) => setTimeout(fn, ms) as unknown as number,
         clearTimeout: (id) => clearTimeout(id as never),
         debug: (msg) => Zotero.debug(msg),
+        requestAnimationFrame: (fn) => (win as unknown as { requestAnimationFrame(f: () => void): number }).requestAnimationFrame(fn),
+        trimDelayMs: () => parseTrimDelayMs(Zotero.Prefs.get("fastReader.trimDelaySeconds")),
         collectGarbage: () => {
           try {
             (win as unknown as { windowUtils: { garbageCollect(): void } }).windowUtils.garbageCollect();
@@ -338,6 +368,18 @@ class FastReaderPlugin {
             Zotero.debug(`[fast-reader] garbageCollect failed: ${e}`);
           }
         },
+        annotations: createAnnotationBackend(Zotero as never, attachment as unknown as AttachmentApi, (m) => this._notify(m)),
+        host: this._hostActions(attachment as unknown as ZItem, pdfPath),
+        positions: new PositionStore({
+          get: () => (Zotero.Prefs.get("fastReader.positions") as string | undefined) || undefined,
+          set: (v) => Zotero.Prefs.set("fastReader.positions", v),
+        }),
+        positionKey: `${(attachment as unknown as AttachmentApi).libraryID}/${(attachment as unknown as AttachmentApi).key}`,
+        settings: createSettingsStore({
+          get: () => (Zotero.Prefs.get("fastReader.settings") as string | undefined) || undefined,
+          set: (v) => Zotero.Prefs.set("fastReader.settings", v),
+        }),
+        initial: loc,
         onClosed: (closed) => {
           this.readerTabs.delete(closed);
         },
@@ -356,6 +398,88 @@ class FastReaderPlugin {
       }
       this._showLaunchError(error);
     }
+  }
+
+  /** A short, non-blocking message in Zotero's own progress-window style. */
+  private _notify(message: string): void {
+    try {
+      const pw = new Zotero.ProgressWindow({ closeOnClick: true });
+      pw.changeHeadline("Fast Reader");
+      pw.addDescription(message);
+      pw.show();
+      pw.startCloseTimer(4500);
+    } catch (e) {
+      Zotero.debug(`[fast-reader] notify failed: ${e}`);
+    }
+  }
+
+  /** What the reader asks of Zotero and the OS besides annotations. */
+  private _hostActions(att: ZItem, pdfPath: string): HostActions {
+    return {
+      copyText: (text) => Zotero.Utilities.Internal.copyTextToClipboard(text),
+      openURL: (uri) => Zotero.launchURL(uri),
+      openInZoteroReader: (pageIndex) => {
+        this._bypassReaderPatch = true;
+        Promise.resolve(Zotero.Reader.open(att.id, { pageIndex }, { allowDuplicate: true }))
+          .catch((e: unknown) => Zotero.debug(`[fast-reader] open in Zotero reader failed: ${e}`))
+          .finally(() => (this._bypassReaderPatch = false));
+      },
+      copyCitation: async () => {
+        const parent = att.parentItemID ? Zotero.Items.get(att.parentItemID) : att;
+        const format = Zotero.Prefs.get("export.quickCopy.setting");
+        const content = await (Zotero as unknown as { QuickCopy: { getContentFromItems(items: unknown[], format: unknown): { text: string } } }).QuickCopy.getContentFromItems([parent], format);
+        if (content?.text) {
+          Zotero.Utilities.Internal.copyTextToClipboard(content.text);
+          this._notify("Citation copied.");
+        }
+      },
+      chooseExportPath: async (defaultName) => {
+        // nsIFilePicker is outside zotero-types' coverage; this is the standard Gecko usage
+        const fp = (Components.classes as unknown as Record<string, { createInstance(iid: unknown): any }>)["@mozilla.org/filepicker;1"]!.createInstance(Components.interfaces.nsIFilePicker);
+        fp.init((Zotero.getMainWindow() as unknown as { browsingContext: unknown }).browsingContext, "Export PDF with annotations", fp.modeSave);
+        fp.defaultString = defaultName;
+        fp.appendFilter("PDF", "*.pdf");
+        const rv: number = await new Promise((resolve) => fp.open(resolve));
+        return rv === fp.returnOK || rv === fp.returnReplace ? (fp.file?.path ?? null) : null;
+      },
+      openExternally: () => Zotero.launchFile(pdfPath),
+      notify: (m) => this._notify(m),
+    };
+  }
+
+  /**
+   * Optional: make "Fast Reader" what Zotero opens for PDFs (double-click, `zotero://open-pdf` links, note
+   * citations) by wrapping `Zotero.Reader.open` while the pref `fastReader.defaultOpener` is on. Zotero's own
+   * tab-restore calls (they pass `tabID`) and "open in window" always go to Zotero's reader, as does
+   * "Open in Zotero's own reader" in our menu.
+   */
+  private _patchReaderOpen(): void {
+    const R = Zotero.Reader as unknown as { open: (...a: unknown[]) => Promise<unknown> } | undefined;
+    if (!R || this._originalReaderOpen) return;
+    const original = R.open.bind(R);
+    this._originalReaderOpen = original;
+    R.open = async (...args: unknown[]) => {
+      const [itemID, location, options] = args as [unknown, unknown, { tabID?: string; openInWindow?: boolean } | undefined];
+      try {
+        if (!this._bypassReaderPatch && Zotero.Prefs.get("fastReader.defaultOpener") && !options?.tabID && !options?.openInWindow) {
+          const item = Zotero.Items.get(itemID as number) as unknown as PdfLikeItem | undefined;
+          if (item && typeof item.isPDFAttachment === "function" && item.isPDFAttachment()) {
+            await this.openInTab(item, readerLocation(location));
+            // callers may touch the returned reader; hand back an inert stand-in
+            return { _initPromise: Promise.resolve(), _isReaderInitialized: true, tabID: null, navigate() {} };
+          }
+        }
+      } catch (e) {
+        Zotero.debug(`[fast-reader] default-opener failed, falling back to Zotero's reader: ${e}`);
+      }
+      return original(...args);
+    };
+  }
+
+  private _unpatchReaderOpen(): void {
+    const R = Zotero.Reader as unknown as { open: unknown } | undefined;
+    if (R && this._originalReaderOpen) R.open = this._originalReaderOpen;
+    this._originalReaderOpen = null;
   }
 
   private _subprocess(): SubprocessModule {
