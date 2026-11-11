@@ -469,9 +469,51 @@ pub mod mupdf_engine {
                     children: o.down.iter().map(convert).collect(),
                 }
             }
-            self.with_doc(|doc| {
+            let existing: Vec<OutlineItem> = self.with_doc(|doc| {
                 let outlines = doc.outlines().map_err(other)?;
                 Ok(outlines.iter().map(convert).collect())
+            })?;
+            if !existing.is_empty() {
+                return Ok(existing);
+            }
+            // no outline in the file: find the headings from the type, as Zotero's reader does
+            self.with_doc(|doc| {
+                let pages = doc.page_count().map_err(other)?.min(100);
+                let mut lines = Vec::new();
+                for pi in 0..pages {
+                    let p = doc.load_page(pi).map_err(other)?;
+                    let tp = p.to_text_page(TextPageFlags::empty()).map_err(other)?;
+                    for block in tp.blocks() {
+                        if block.r#type() != TextBlockType::Text {
+                            continue;
+                        }
+                        for line in block.lines() {
+                            let mut text = String::new();
+                            let mut font = String::new();
+                            let mut size = 0.0f32;
+                            let mut uniform = true;
+                            for ch in line.chars() {
+                                let Some(c) = ch.char() else { continue };
+                                text.push(c);
+                                if c.is_whitespace() {
+                                    continue;
+                                }
+                                let name = ch.font().map(|f| crate::headings::family_name(f.name())).unwrap_or_default();
+                                if font.is_empty() {
+                                    font = name;
+                                    size = ch.size();
+                                } else if font != name && c.is_alphabetic() {
+                                    uniform = false; // (a dash or digit from a fallback font does not make a line mixed)
+                                }
+                            }
+                            if font.is_empty() || text.trim().is_empty() {
+                                continue;
+                            }
+                            lines.push(crate::headings::RawLine { page: pi as u32, text, font, size, y: line.bounds().y0, x0: line.bounds().x0, x1: line.bounds().x1, uniform });
+                        }
+                    }
+                }
+                Ok(crate::headings::extract_outline(&lines))
             })
         }
 
