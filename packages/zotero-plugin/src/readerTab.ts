@@ -253,6 +253,11 @@ export class ReaderTab {
   private drag: { page: number; moved: boolean; startX: number; startY: number; wordMode: boolean } | null = null;
   private annotations: AnnotationRecord[] = [];
   private annotationRects = new Map<string, Rect[]>(); // key -> page-space rects
+  private embedded = new Map<number, AnnotationRecord[]>(); // annotations stored in the PDF file, by page
+  private focusKey: string | null = null;
+  private focusPulse = false;
+  private embeddedAsked = false;
+  private embeddedTimer: number | null = null;
   private outline: OutlineNode[] | null = null;
   private readingTexts = new Set<number>();
   private readingTimer: number | null = null;
@@ -956,6 +961,20 @@ export class ReaderTab {
         if (rects[0]) items.push({ kind: "note", rect: this.pxRect(page, rects[0]), color: a.color, key: a.key });
       } else for (const r of rects) items.push({ kind: a.kind, rect: this.pxRect(page, r), color: a.color, key: a.key });
     }
+    if (this.areaDrag?.page === page) {
+      const d = this.areaDrag;
+      items.push({ kind: "area", rect: this.pxRect(page, [Math.min(d.x0, d.x1), Math.min(d.y0, d.y1), Math.abs(d.x1 - d.x0), Math.abs(d.y1 - d.y0)]) });
+    }
+    if (this.focusKey) {
+      const a = this.annotations.find((x) => x.key === this.focusKey);
+      const rects = a && a.pageIndex === page ? this.annotationRects.get(a.key) : undefined;
+      if (a && rects?.length) {
+        const x0 = Math.min(...rects.map((r) => r[0])), y0 = Math.min(...rects.map((r) => r[1]));
+        const x1 = Math.max(...rects.map((r) => r[0] + r[2])), y1 = Math.max(...rects.map((r) => r[1] + r[3]));
+        const pad = 3;
+        items.push({ kind: "focus", rect: this.pxRect(page, [x0 - pad, y0 - pad, x1 - x0 + 2 * pad, y1 - y0 + 2 * pad]), color: a.color, key: a.key, external: a.external, pulse: this.focusPulse });
+      }
+    }
     const hits = this.search?.byPage.get(page);
     if (hits) {
       const cur = this.search!.list[this.search!.current];
@@ -1099,7 +1118,10 @@ export class ReaderTab {
         // a click: annotation, then link, otherwise just clears the selection
         if (pt) {
           const ann = this.annotationAt(page, pt.x, pt.y);
-          if (ann) return this.showAnnotationPopup(ann, e.clientX, e.clientY);
+          if (ann) {
+            this.setFocus(ann.key);
+            return this.showAnnotationPopup(ann, e.clientX, e.clientY);
+          }
           const link = this.linkAt(page, pt.x, pt.y);
           if (link) return this.followLink(link, page);
           const cite = this.tool ? null : this.citationAt(page, pt.x, pt.y);
@@ -1138,7 +1160,26 @@ export class ReaderTab {
     this.refreshOverlaysFor(a, b);
   }
 
+  /** Puts the focus ring on an annotation (the one just clicked); `pulse` plays the arrival animation once. */
+  private setFocus(key: string | null, pulse = false): void {
+    const prev = this.focusKey;
+    this.focusKey = key;
+    this.view.selectedAnnotation = key;
+    this.focusPulse = pulse && !!key;
+    for (const k of [prev, key]) {
+      const a = k ? this.annotations.find((x) => x.key === k) : null;
+      if (a) this.refreshOverlaysFor(a.pageIndex, a.pageIndex);
+    }
+    if (this.focusPulse) {
+      this.d.setTimeout(() => {
+        this.focusPulse = false;
+      }, 1000);
+    }
+    if (this.view.sidebarOpen && this.view.sidebarTabNow === "annotations") this.renderAnnotationList();
+  }
+
   clearSelection(): void {
+    if (this.focusKey) this.setFocus(null);
     if (!this.selection) return this.view.hidePopups();
     this.selection = null;
     this.view.hidePopups();
@@ -1550,6 +1591,7 @@ export class ReaderTab {
     if (!rect) return this.goToPage(a.pageIndex);
     const v = this.pxRect(a.pageIndex, rect);
     this.view.scroller.scrollTop = Math.max(0, this.layout.tops[a.pageIndex]! + v[1] - this.view.viewport.height / 3);
+    this.setFocus(a.key, true);
     this.onScrolled(true);
     if (edit) {
       this.d.setTimeout(() => {

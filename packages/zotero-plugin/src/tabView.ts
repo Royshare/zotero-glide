@@ -23,11 +23,15 @@ export type PageTheme = "auto" | "light" | "dark" | "black" | "sepia";
 export type SidebarTab = "thumbnails" | "annotations" | "outline" | "images";
 
 export interface OverlayItem {
-  kind: "search" | "search-current" | "selection" | "highlight" | "underline" | "note" | "link";
+  kind: "search" | "search-current" | "selection" | "highlight" | "underline" | "note" | "image" | "area" | "link" | "focus";
   /** px, relative to the page box (view space) */
   rect: Rect;
   color?: string;
   key?: string;
+  /** focus ring only: stored in the PDF file (read-only): dashed, with a tag */
+  external?: boolean;
+  /** focus ring only: play the arrival pulse */
+  pulse?: boolean;
 }
 
 export interface SidebarAnnotation {
@@ -183,6 +187,11 @@ const CSS = `
 .fr-ann .fr-ann-badge{display:inline-flex;align-items:center;gap:3px;margin-inline-start:6px;padding:0 5px;border:1px solid var(--fr-border);border-radius:9px;font-size:10px;opacity:.85}
 .fr-ann .fr-ann-text{margin:2px 0}
 .fr-ann .fr-ann-comment{margin-top:4px;font-style:italic}
+.fr-ann[data-selected=true][data-external=true]{box-shadow:inset 0 0 0 1px var(--c)}
+.fr-ann[data-selected=true]{background:var(--fr-active);border-color:var(--c)}
+.fr-ann textarea{display:block;box-sizing:border-box;width:100%;min-height:54px;margin-top:6px;resize:vertical;font:inherit;border:1px solid var(--fr-border);border-radius:5px;background:var(--fr-bg);color:inherit;padding:4px}
+.fr-ann .fr-ann-add{margin-top:4px;color:AccentColor;opacity:.9}
+.fr-swatch{width:14px;height:14px;border-radius:50%;flex:none;margin:0 1px}
 .fr-empty{padding:16px;opacity:.6;text-align:center}
 .fr-outline ul{list-style:none;margin:0;padding-inline-start:14px}
 .fr-outline>ul{padding-inline-start:6px}
@@ -200,6 +209,27 @@ const CSS = `
 .fr-ov .fr-o-selection{background:rgba(51,118,240,.35)}
 .fr-ov .fr-o-highlight{opacity:.4;mix-blend-mode:multiply}
 .fr-ov .fr-o-underline{border-bottom:2px solid var(--c);height:0 !important}
+.fr-ov .fr-o-focus{--c:AccentColor;border-radius:6px;outline:2px solid var(--c);outline-offset:0;overflow:visible;
+  box-shadow:0 0 0 1px rgba(255,255,255,.85),0 0 0 5px color-mix(in srgb,var(--c) 30%,transparent),0 3px 14px rgba(0,0,0,.28);z-index:5}
+.fr-ov .fr-o-focus[data-external=true]{outline-style:dashed;outline-width:2px;box-shadow:0 0 0 1px rgba(255,255,255,.85),0 0 0 5px color-mix(in srgb,var(--c) 18%,transparent),0 3px 14px rgba(0,0,0,.22)}
+.fr-ov .fr-o-focus[data-pulse=true]{animation:fr-focus-pulse .9s ease-out 1}
+.fr-focus-tag{position:absolute;left:-2px;bottom:calc(100% + 8px);white-space:nowrap;padding:1px 7px;border-radius:9px;font-size:10px;font-weight:600;background:#2f333d;color:#e8ebf1;box-shadow:0 1px 4px rgba(0,0,0,.35)}
+@keyframes fr-focus-pulse{0%{box-shadow:0 0 0 1px rgba(255,255,255,.85),0 0 0 0 color-mix(in srgb,var(--c) 70%,transparent),0 3px 14px rgba(0,0,0,.28)}100%{box-shadow:0 0 0 1px rgba(255,255,255,.85),0 0 0 22px color-mix(in srgb,var(--c) 0%,transparent),0 3px 14px rgba(0,0,0,.28)}}
+.fr-ov .fr-o-image{border:2px solid var(--c);background:color-mix(in srgb,var(--c) 14%,transparent)}
+.fr-ov .fr-o-area{border:1.5px dashed AccentColor;background:color-mix(in srgb,AccentColor 15%,transparent)}
+.fr-figs{padding:6px}
+.fr-figs-save{width:100%;gap:6px;border:1px solid var(--fr-border);margin-bottom:2px}
+.fr-fig-page{display:flex;align-items:center;gap:8px;margin:10px 0 6px;font-size:11px;opacity:.7}
+.fr-fig-page::before,.fr-fig-page::after{content:"";flex:1;border-top:1px solid var(--fr-border)}
+.fr-fig{display:block;width:100%;border:1px solid var(--fr-border);border-radius:4px;background:#fff;overflow:hidden;cursor:default;margin-bottom:6px;box-sizing:border-box}
+.fr-fig:hover{outline:2px solid color-mix(in srgb,AccentColor 60%,transparent)}
+.fr-fig img{display:block;width:100%;height:100%;object-fit:contain}
+.fr-cite-list{width:360px;max-width:80vw;max-height:260px;overflow:auto}
+.fr-cite{display:flex;gap:8px;padding:5px 7px;border-radius:5px;font-size:12px;line-height:1.35;cursor:default}
+.fr-cite:hover{background:var(--fr-hover)}
+.fr-cite-n{flex:none;min-width:1.6em;font-weight:600;opacity:.65;text-align:end}
+.fr-ann img{display:block;max-width:100%;margin:4px 0;border-radius:3px}
+.fr-brand{display:inline-flex;align-items:center;gap:5px;padding:0 6px 0 2px;opacity:.85;font-weight:600;font-size:12px;cursor:default}
 .fr-ov .fr-o-note{border-radius:3px 3px 3px 0;box-shadow:0 1px 3px rgba(0,0,0,.4);opacity:.95;border:1px solid rgba(0,0,0,.35)}
 .fr-root[data-theme=dark] .fr-ov .fr-o-highlight{mix-blend-mode:screen;opacity:.55}
 .fr-root[data-theme=dark]{--fr-stage:#262932}
@@ -620,6 +650,16 @@ export class ReaderView {
         if (it.kind === "highlight" || it.kind === "note") d.style.background = it.color;
       }
       if (it.key) d.dataset.key = it.key;
+      if (it.kind === "focus") {
+        if (it.external) {
+          d.dataset.external = "true";
+          const tag = this.doc.createElementNS(XHTML, "span") as HTMLElement;
+          tag.className = "fr-focus-tag";
+          tag.textContent = "In PDF \u00b7 read-only";
+          d.append(tag);
+        }
+        if (it.pulse) d.dataset.pulse = "true";
+      }
       if (it.kind === "underline") {
         d.style.top = `${y + h - 1}px`;
       }
@@ -907,7 +947,11 @@ export class ReaderView {
   }
 
   renderAnnotations(list: SidebarAnnotation[]): void {
+    const keep = this.sideBody.scrollTop;
     this.sideBody.replaceChildren();
+    this.doc.defaultView?.queueMicrotask(() => {
+      this.sideBody.scrollTop = keep;
+    });
     this.thumbEls = [];
     if (!list.length) {
       const e = this.doc.createElementNS(XHTML, "div") as HTMLElement;
@@ -976,7 +1020,24 @@ export class ReaderView {
         add.textContent = "Add comment";
         card.append(add);
       }
-      card.addEventListener("click", () => this.ev.jumpToAnnotation(a.key));
+      card.addEventListener("click", () => {
+        this.selectedAnnotation = a.key;
+        if (a.external) {
+          this.renderAnnotations(list);
+          return this.ev.jumpToAnnotation(a.key);
+        }
+        this.focusAnnotationComment = true;
+        this.renderAnnotations(list);
+        this.focusAnnotationComment = false;
+        this.ev.jumpToAnnotation(a.key);
+      });
+      card.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.selectedAnnotation = a.key;
+        this.renderAnnotations(list);
+        this.ev.annotationMenu(a.key, e.clientX, e.clientY);
+      });
       this.sideBody.append(card);
     }
   }
