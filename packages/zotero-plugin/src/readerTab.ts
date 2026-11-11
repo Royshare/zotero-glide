@@ -914,6 +914,11 @@ export class ReaderTab {
   /** What hovering a citation shows: numbered markers resolve through the reference list, PDF links through their destination. */
   private citeTargetAt(page: number, x: number, y: number): HoverTarget | null {
     const cite = this.tool ? null : this.citationAt(page, x, y);
+    const bare = cite && !this.tool ? this.crossRefAt(page, x, y) : null;
+    if (cite && bare?.bare) {
+      // "(5)": the equation if the document has one numbered 5, otherwise the reference
+      return { key: `${page}:${bare.key}`, preview: () => this.previewFor(bare), items: async () => cite.items.slice(0, 12).map((it) => ({ label: it.label, text: it.text, go: () => this.scrollToPageY(it.page, it.y) })) };
+    }
     if (cite) {
       return {
         key: `${page}:${cite.key}`,
@@ -944,18 +949,18 @@ export class ReaderTab {
       if (this.citeShowTimer) this.d.clearTimeout(this.citeShowTimer);
       this.citeShowTimer = this.d.setTimeout(() => {
         this.citeShowTimer = null;
-        if (target.preview) {
-          void target.preview().then((p) => {
-            if (this.disposed || this.citeShowTimer !== null || !p) return;
+        const showItems = () =>
+          void target.items?.().then((items) => {
+            if (this.disposed || this.citeShowTimer !== null) return;
             this.citeKey = target.key;
-            this.view.showPreviewPopup(clientX, clientY + 8, p.label, p.url, p.go);
+            this.view.showCitationPopup(clientX, clientY + 8, items, (i) => items[i]!.go(), (i, x, y) => this.showReferenceMenu(items[i]!, x, y));
           });
-          return;
-        }
-        void target.items!().then((items) => {
+        if (!target.preview) return showItems();
+        void target.preview().then((p) => {
           if (this.disposed || this.citeShowTimer !== null) return;
+          if (!p) return showItems(); // no such equation: it was a citation after all
           this.citeKey = target.key;
-          this.view.showCitationPopup(clientX, clientY + 8, items, (i) => items[i]!.go(), (i, x, y) => this.showReferenceMenu(items[i]!, x, y));
+          this.view.showPreviewPopup(clientX, clientY + 8, p.label, p.url, p.go);
         });
       }, 220);
       return;
@@ -1212,19 +1217,15 @@ export class ReaderTab {
           }
           const link = this.linkAt(page, pt.x, pt.y);
           if (link) return this.followLink(link, page);
-          const ref = this.tool || this.citationAt(page, pt.x, pt.y) ? null : this.crossRefAt(page, pt.x, pt.y);
-          if (ref) {
-            this.view.hidePopups();
-            this.citeKey = null;
-            void this.resolveCrossRef(ref, page).then((t) => t && this.scrollToPageY(t.page, t.y));
-            return;
-          }
           const cite = this.tool ? null : this.citationAt(page, pt.x, pt.y);
-          if (cite) {
+          const ref = this.tool || (cite && !this.crossRefAt(page, pt.x, pt.y)?.bare) ? null : this.crossRefAt(page, pt.x, pt.y);
+          if (ref || cite) {
             this.view.hidePopups();
             this.citeKey = null;
-            const first = cite.items[0]!;
-            return this.scrollToPageY(first.page, first.y);
+            const toCite = () => cite && this.scrollToPageY(cite.items[0]!.page, cite.items[0]!.y);
+            if (!ref) return void toCite();
+            void this.resolveCrossRef(ref, page).then((t) => (t ? this.scrollToPageY(t.page, t.y) : toCite()));
+            return;
           }
         }
         return this.clearSelection();

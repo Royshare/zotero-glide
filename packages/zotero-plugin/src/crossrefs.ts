@@ -6,7 +6,7 @@
  * the places they point to (caption lines, equation numbers) and the page region worth previewing. Pure.
  */
 
-import { pageStream } from "./citations.ts";
+import { isEquationNumber, pageStream } from "./citations.ts";
 import type { PageText } from "./textModel.ts";
 import type { Rect } from "./protocol.ts";
 
@@ -19,6 +19,8 @@ export interface CrossRef {
   sub: string;
   rects: Rect[];
   key: string;
+  /** a bare "(5)" in running text: an equation if the document has one numbered 5, otherwise maybe a citation */
+  bare?: boolean;
 }
 
 export interface Target {
@@ -40,12 +42,25 @@ const REF_RE = new RegExp(`\\b${WORD}\\s*\\(?\\s*(\\d{1,3})([a-z])?(?![\\w.]*\\d
 export function findCrossRefs(text: PageText): CrossRef[] {
   const ps = pageStream(text);
   const out: CrossRef[] = [];
+  const used: Array<[number, number]> = [];
   for (let m = REF_RE.exec(ps.stream); m; m = REF_RE.exec(ps.stream)) {
     // a caption itself ("Fig. 3. Results...") starts its line: it is the target, not a reference
     const li = ps.lineOf[m.index]!;
     if (ps.idxOf[m.index] === 0 && /^[A-Za-z]+\.?\s*\(?\d+[a-z]?\)?\s*[.:|]/.test(text.lines[li]!.t.trim())) continue;
     const rects = ps.rectsFor(m.index, m.index + m[0].length);
+    used.push([m.index, m.index + m[0].length]);
     if (rects.length) out.push({ kind: KIND_OF(m[1]!), n: Number(m[2]), sub: m[3] ?? "", rects, key: `x${m.index}` });
+  }
+  // a bare "(5)" inside a sentence ("from (5) we get", "Eqs. (3) and (4)"); the equation's own number at a line end is not one
+  const bare = /\((\d{1,3})([a-z])?\)/g;
+  for (let m = bare.exec(ps.stream); m; m = bare.exec(ps.stream)) {
+    const before = ps.stream.slice(Math.max(0, m.index - 14), m.index);
+    if (m.index < 3 || /(?:Figs?|Figures?|Tables?|Sec|Section|Ref)\.?\s*$/i.test(before) || /[=+*/<>−-]\s*$/.test(before)) continue;
+    if (/\w\s*$/.test(before) && !/(?:\b(?:Eqs?|Equations?|and|or|to|in|by|of|from|using|via|see|with|into|Eq)\.?|[,;])\s*$/i.test(before)) continue; // "word(5)": a footnote-like marker or a function call
+    if (used.some(([a, b]) => m!.index < b && m!.index + m![0].length > a)) continue; // already found as "Eq. (5)"
+    if (isEquationNumber(text, ps, m.index, m.index + m[0].length)) continue;
+    const rects = ps.rectsFor(m.index, m.index + m[0].length);
+    if (rects.length) out.push({ kind: "eq", n: Number(m[1]), sub: m[2] ?? "", rects, key: `b${m.index}`, bare: true });
   }
   return out;
 }

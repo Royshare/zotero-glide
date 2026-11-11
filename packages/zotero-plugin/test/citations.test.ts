@@ -189,3 +189,9 @@ test("figure and table references, captions and preview regions", () => {
   const r = captionRegion(text, 2, 612, 792, "fig");
   assert.ok(r[1] < 200 && r[1] + r[3] >= 409);
 });
+
+test("a bare (5) in a sentence is an equation reference; the equation's own number is not", () => {
+  const text = { lines: [line("Substituting into (5) and Eqs. (3) and (4) we get f(2) = 1.", {}, 50), line("E = mc2                                                  (5)", {}, 100)] };
+  const refs = findCrossRefs(text).filter((r) => r.kind === "eq");
+  assert.deepEqual(refs.map((r) => [r.n, !!r.bare]), [[3, false], [5, true], [4, true]]);
+});
