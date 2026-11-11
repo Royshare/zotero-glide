@@ -17,9 +17,10 @@ import type { OutlineNode, Rect } from "./protocol.ts";
 
 const XHTML = "http://www.w3.org/1999/xhtml";
 
-export type Tool = "highlight" | "underline" | "note" | null;
-export type PageTheme = "light" | "dark" | "sepia";
-export type SidebarTab = "thumbnails" | "annotations" | "outline";
+export type Tool = "highlight" | "underline" | "note" | "image" | null;
+/** "auto" follows Zotero's light/dark appearance. */
+export type PageTheme = "auto" | "light" | "dark" | "black" | "sepia";
+export type SidebarTab = "thumbnails" | "annotations" | "outline" | "images";
 
 export interface OverlayItem {
   kind: "search" | "search-current" | "selection" | "highlight" | "underline" | "note" | "link";
@@ -84,7 +85,56 @@ export interface ViewEvents {
   sidebarScrolled(): void;
   jumpToPage(page: number): void;
   jumpToAnnotation(key: string): void;
+  /** The page bitmaps must be redrawn (the dark pixel pass switched on or off). */
+  themeChanged(): void;
+  /** The sidebar card's inline comment box was edited. */
+  commentAnnotation(key: string, text: string): void;
+  /** Right-click on a sidebar card. */
+  annotationMenu(key: string, clientX: number, clientY: number): void;
   outlineClick(node: OutlineNode): void;
+}
+
+const DARK_BG = [0x2f, 0x33, 0x3d] as const;
+const DARK_FG = [0xdc, 0xe0, 0xe8] as const;
+/** per channel: luminance 0..255 -> slate..off-white (white paper -> slate, black text -> off-white) */
+const DARK_MAP = [0, 1, 2].map((c) => Uint8Array.from({ length: 256 }, (_, l) => Math.round(DARK_BG[c]! + ((255 - l) / 255) * (DARK_FG[c]! - DARK_BG[c]!))));
+const DIM = Uint8Array.from({ length: 256 }, (_, v) => Math.round(v * 0.88));
+
+/**
+ * Zotero-style dark recoloring, on a copy of the bitmap: gray paper and text go white..black -> slate..off-white,
+ * colored pixels are dimmed, and the page's raster images (`images`, bitmap pixels, from the renderer) are left
+ * exactly as they are, white background included. One cheap pass with lookup tables.
+ */
+export function darken(src: Uint8ClampedArray<ArrayBuffer>, width: number, height: number, images: Rect[] = []): Uint8ClampedArray<ArrayBuffer> {
+  const out = src; // in place: a frame is a private copy, and a second 11 MB buffer per page is memory the default reader does not use
+  let mask: Uint8Array | null = null;
+  if (images.length) {
+    mask = new Uint8Array(width * height);
+    for (const [rx, ry, rw, rh] of images) {
+      const x0 = Math.max(0, Math.floor(rx)), x1 = Math.min(width, Math.ceil(rx + rw));
+      for (let y = Math.max(0, Math.floor(ry)), y1 = Math.min(height, Math.ceil(ry + rh)); y < y1; y++) mask.fill(1, y * width + x0, y * width + x1);
+    }
+  }
+  const [mr, mg, mb] = DARK_MAP as [Uint8Array, Uint8Array, Uint8Array];
+  for (let p = 0, i = 0, n = width * height; p < n; p++, i += 4) {
+    const r = src[i]!, g = src[i + 1]!, b = src[i + 2]!;
+    if (mask && mask[p]) continue;
+    const hi = r > g ? (r > b ? r : b) : g > b ? g : b;
+    const lo = r < g ? (r < b ? r : b) : g < b ? g : b;
+    const chroma = hi - lo;
+    if (chroma >= 48) {
+      out[i] = DIM[r]!;
+      out[i + 1] = DIM[g]!;
+      out[i + 2] = DIM[b]!;
+      continue;
+    }
+    const l = (r * 77 + g * 150 + b * 29) >> 8; // 0..255
+    const w = 1 - chroma / 48;
+    out[i] = DIM[r]! + (mr[l]! - DIM[r]!) * w;
+    out[i + 1] = DIM[g]! + (mg[l]! - DIM[g]!) * w;
+    out[i + 2] = DIM[b]! + (mb[l]! - DIM[b]!) * w;
+  }
+  return out;
 }
 
 const CSS = `
@@ -145,8 +195,15 @@ const CSS = `
 .fr-ov .fr-o-underline{border-bottom:2px solid var(--c);height:0 !important}
 .fr-ov .fr-o-note{border-radius:3px 3px 3px 0;box-shadow:0 1px 3px rgba(0,0,0,.4);opacity:.95;border:1px solid rgba(0,0,0,.35)}
 .fr-root[data-theme=dark] .fr-ov .fr-o-highlight{mix-blend-mode:screen;opacity:.55}
-.fr-root[data-theme=dark] .fr-page canvas{filter:invert(1) hue-rotate(180deg)}
-.fr-root[data-theme=dark] .fr-page{background:#111}
+.fr-root[data-theme=dark]{--fr-stage:#262932}
+/* Zotero's "dark": slate pages; the bitmap is recolored per pixel (see darken()), so photos keep their colors. */
+.fr-root[data-theme=dark] .fr-page{background:#2f333d}
+.fr-root[data-theme=dark] .fr-ov .fr-o-highlight{mix-blend-mode:screen;opacity:.5}
+/* Zotero's "black": the whole page inverted, which also inverts photos. */
+.fr-root[data-theme=black]{--fr-stage:#111}
+.fr-root[data-theme=black] .fr-ov .fr-o-highlight{mix-blend-mode:screen;opacity:.55}
+.fr-root[data-theme=black] .fr-page canvas{filter:invert(1) hue-rotate(180deg)}
+.fr-root[data-theme=black] .fr-page{background:#000}
 .fr-root[data-theme=sepia] .fr-page canvas{filter:sepia(.55) saturate(.9) brightness(.97)}
 .fr-root[data-theme=sepia] .fr-page{background:#f4ecd8}
 .fr-msg{position:absolute;inset:34px 0 0;display:flex;align-items:center;justify-content:center;text-align:center;padding:2em;white-space:pre-wrap;pointer-events:none;opacity:.8}
@@ -377,8 +434,28 @@ export class ReaderView {
     this.message.textContent = text ?? "";
     this.message.style.display = text ? "flex" : "none";
   }
+  private themeSetting: PageTheme = "light";
+  private themeMql: MediaQueryList | null = null;
+  private readonly onSchemeChange = (): void => this.applyTheme();
   setTheme(theme: PageTheme): void {
-    this.root.dataset.theme = theme;
+    this.themeSetting = theme;
+    if (!this.themeMql) {
+      this.themeMql = this.win.matchMedia?.("(prefers-color-scheme: dark)") ?? null;
+      this.themeMql?.addEventListener("change", this.onSchemeChange);
+    }
+    this.applyTheme();
+  }
+  private applyTheme(): void {
+    const before = this.root.dataset.theme;
+    const now = this.themeSetting === "auto" ? (this.themeMql?.matches ? "dark" : "light") : this.themeSetting;
+    this.root.dataset.theme = now;
+    if (before !== undefined && (before === "dark") !== (now === "dark")) this.ev.themeChanged();
+  }
+  get themeNow(): string | undefined {
+    return this.root.dataset.theme;
+  }
+  private get pixelDark(): boolean {
+    return this.root.dataset.theme === "dark";
   }
   setPageInfo(page: number, total: number): void {
     if (this.doc.activeElement !== this.pageInput) this.pageInput.value = String(page);
@@ -486,7 +563,8 @@ export class ReaderView {
     return el ? Number(el.dataset.page) : null;
   }
 
-  drawFrame(page: number, rgba: Uint8Array, width: number, height: number): void {
+  /** `images`: where the page's raster images are, in bitmap pixels (kept as they are in dark mode). */
+  drawFrame(page: number, rgba: Uint8Array, width: number, height: number, images: Rect[] = []): void {
     const canvas = this.canvases[page];
     if (!canvas) return;
     canvas.width = width;
@@ -494,7 +572,8 @@ export class ReaderView {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     const ImageDataCtor = (this.win as unknown as { ImageData: typeof ImageData }).ImageData;
-    ctx.putImageData(new ImageDataCtor(new Uint8ClampedArray(rgba.buffer as ArrayBuffer, rgba.byteOffset, width * height * 4), width, height), 0, 0);
+    const px = new Uint8ClampedArray(rgba.buffer as ArrayBuffer, rgba.byteOffset, width * height * 4);
+    ctx.putImageData(new ImageDataCtor(this.pixelDark ? darken(px, width, height, images) : px, width, height), 0, 0);
   }
 
   /** Frees a page's bitmap (it scrolled far away). The box and its overlays stay. */
@@ -742,7 +821,8 @@ export class ReaderView {
     c.width = width;
     c.height = height;
     const ImageDataCtor = (this.win as unknown as { ImageData: typeof ImageData }).ImageData;
-    c.getContext("2d")?.putImageData(new ImageDataCtor(new Uint8ClampedArray(rgba.buffer as ArrayBuffer, rgba.byteOffset, width * height * 4), width, height), 0, 0);
+    const px = new Uint8ClampedArray(rgba.buffer as ArrayBuffer, rgba.byteOffset, width * height * 4);
+    c.getContext("2d")?.putImageData(new ImageDataCtor(this.pixelDark ? darken(px, width, height) : px, width, height), 0, 0);
   }
   hasThumb(page: number): boolean {
     return (this.thumbCanvases[page]?.width ?? 0) > 0;
@@ -911,6 +991,7 @@ export class ReaderView {
   }
 
   dispose(): void {
+    this.themeMql?.removeEventListener("change", this.onSchemeChange);
     this.resizeObserver?.disconnect();
     if (this.resizeTimer !== null) this.win.clearTimeout(this.resizeTimer);
     this.clearAllPages();

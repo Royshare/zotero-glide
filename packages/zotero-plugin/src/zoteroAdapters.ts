@@ -15,8 +15,8 @@ import type { KeyValueStorage } from "./positionStore.ts";
 
 // ---------------------------------------------------------------- settings (pure)
 
-const THEMES = ["light", "dark", "sepia"] as const;
-const TABS = ["thumbnails", "annotations", "outline"] as const;
+const THEMES = ["auto", "light", "dark", "black", "sepia"] as const;
+const TABS = ["thumbnails", "annotations", "outline", "images"] as const;
 
 /** Reads the settings pref defensively: any bad or missing field falls back to its default. */
 export function parseSettings(raw: string | undefined): GlobalSettings {

@@ -115,7 +115,7 @@ export interface GlobalSettings {
   color: string;
 }
 
-export const DEFAULT_SETTINGS: GlobalSettings = { theme: "light", sidebarOpen: false, sidebarTab: "thumbnails", readingFontSize: 17, color: ANNOTATION_COLORS[0]!.hex };
+export const DEFAULT_SETTINGS: GlobalSettings = { theme: "auto", sidebarOpen: false, sidebarTab: "thumbnails", readingFontSize: 17, color: ANNOTATION_COLORS[0]!.hex };
 
 export interface ReaderTabDeps {
   tabs: ZoteroTabs;
@@ -260,6 +260,12 @@ export class ReaderTab {
         sidebarScrolled: () => this.onSidebarScrolled(),
         jumpToPage: (p) => this.goToPage(p),
         jumpToAnnotation: (k) => this.revealAnnotation(k),
+        themeChanged: () => {
+          this.resetRendered();
+          this.requestVisible();
+        },
+        commentAnnotation: (k, text) => void this.d.annotations.update(k, { comment: text }),
+        annotationMenu: (k, x, y) => this.showAnnotationMenu(k, x, y),
         outlineClick: (n) => this.onOutlineClick(n),
       },
       deps.isMac
@@ -659,7 +665,8 @@ export class ReaderTab {
           this.view.drawThumb(meta.page, bytes, f.width, f.height);
           this.thumbRendered.add(meta.page);
         } else if (meta.key === this.currentKey(meta.page)) {
-          this.view.drawFrame(meta.page, bytes, f.width, f.height);
+          this.imagesAtDraw.set(meta.page, this.images.has(meta.page));
+          this.view.drawFrame(meta.page, bytes, f.width, f.height, this.imageRectsPx(meta.page, f.width));
           this.rendered.set(meta.page, meta.key);
           this.refreshOverlaysFor(meta.page, meta.page);
         }
@@ -1223,6 +1230,7 @@ export class ReaderTab {
       { label: "Match Zotero (auto)", icon: "sun", checked: s.theme === "auto", run: () => this.setTheme("auto") },
       { label: "Light pages", icon: "sun", checked: s.theme === "light", run: () => this.setTheme("light") },
       { label: "Dark pages", icon: "moon", checked: s.theme === "dark", run: () => this.setTheme("dark") },
+      { label: "Black pages (inverted)", icon: "moon", checked: s.theme === "black", run: () => this.setTheme("black") },
       { label: "Sepia pages", icon: "book-open", checked: s.theme === "sepia", run: () => this.setTheme("sepia") },
       { label: "Reading mode (reflowed text)", icon: "file-text", checked: this.view.readingMode, run: () => this.setReadingMode(!this.view.readingMode) },
       { separator: true, label: "" },
