@@ -89,6 +89,8 @@ class FastReaderPlugin {
   private originalGetState: (() => SessionTab[]) | null = null;
   private _originalReaderOpen: ((...a: unknown[]) => Promise<unknown>) | null = null;
   private _bypassReaderPatch = false;
+  /** Set while Zotero's viewAttachment resolves a missing file, so the reader it opens is ours. */
+  private _openNextInFastReader = false;
   private notifierID: string | null = null;
 
   init({ id, version, rootURI }: { id: string; version: string; rootURI: string }): void {
@@ -272,6 +274,10 @@ class FastReaderPlugin {
             pathJoin: (...parts: string[]) => PathUtils.join(...parts),
             fetchBytes: (url: string) => this._fetchBytes(url),
             writeBytes: (p: string, bytes: Uint8Array) => IOUtils.write(p, bytes),
+            // never write over a binary that may be running (macOS then kills the next launch) -- see extractHelper.ts
+            readExisting: async (p: string) => ((await IOUtils.exists(p)) ? await IOUtils.read(p) : null),
+            moveFile: (from: string, to: string) => IOUtils.move(from, to),
+            removeFile: (p: string) => IOUtils.remove(p, { ignoreAbsent: true }),
             // IOUtils.setPermissions wants a numeric mode, not a
             // string -- "755" is silently misinterpreted (confirmed
             // live: it does not produce rwxr-xr-x), 0o755 does.
@@ -317,8 +323,15 @@ class FastReaderPlugin {
       }
       const attachment = await resolvePdfAttachment(item);
       const pdfPath = attachment && typeof attachment.getFilePathAsync === "function" ? await attachment.getFilePathAsync() : null;
-      if (!attachment || !pdfPath) {
+      if (!attachment) {
         throw new AttachmentMissingError(item?.key ?? "(unknown item)");
+      }
+      if (!pdfPath) {
+        // The item is a PDF attachment but its file isn't on disk (e.g. a synced file that hasn't been downloaded
+        // yet). Zotero's own flow knows what to do -- download it, or offer to locate it -- so use that instead of a
+        // dead-end error; once the file exists it opens here (see _openNextInFastReader).
+        await this._viewMissingAttachment((attachment as unknown as ZItem).id);
+        return;
       }
 
       for (const open of this.readerTabs) {
@@ -400,6 +413,21 @@ class FastReaderPlugin {
     }
   }
 
+  /**
+   * Hands a PDF whose file is missing to Zotero's viewAttachment (download from sync / locate dialog), and makes the
+   * reader that Zotero then opens be this one even if the default-opener preference is off.
+   */
+  private async _viewMissingAttachment(attachmentID: number): Promise<void> {
+    const pane = Zotero.getActiveZoteroPane() as unknown as { viewAttachment(id: number): Promise<unknown> } | undefined;
+    if (!pane) throw new AttachmentMissingError(String(attachmentID));
+    this._openNextInFastReader = true;
+    try {
+      await pane.viewAttachment(attachmentID);
+    } finally {
+      this._openNextInFastReader = false;
+    }
+  }
+
   /** A short, non-blocking message in Zotero's own progress-window style. */
   private _notify(message: string): void {
     try {
@@ -461,7 +489,7 @@ class FastReaderPlugin {
     R.open = async (...args: unknown[]) => {
       const [itemID, location, options] = args as [unknown, unknown, { tabID?: string; openInWindow?: boolean } | undefined];
       try {
-        if (!this._bypassReaderPatch && Zotero.Prefs.get("fastReader.defaultOpener") && !options?.tabID && !options?.openInWindow) {
+        if (!this._bypassReaderPatch && (this._openNextInFastReader || Zotero.Prefs.get("fastReader.defaultOpener")) && !options?.tabID && !options?.openInWindow) {
           const item = Zotero.Items.get(itemID as number) as unknown as PdfLikeItem | undefined;
           if (item && typeof item.isPDFAttachment === "function" && item.isPDFAttachment()) {
             await this.openInTab(item, readerLocation(location));

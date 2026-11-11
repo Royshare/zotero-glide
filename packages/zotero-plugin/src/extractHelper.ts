@@ -14,20 +14,20 @@
  * install: `rootURI` is `jar:file:///.../fast-reader@....xpi!/` in that
  * case, not a plain `file://` directory -- see STATUS.md.)
  *
- * Always re-extracts (overwrites any existing file at destPath) rather
- * than skipping when the destination already exists. An earlier version
- * skipped extraction whenever the file existed, keyed only on the
- * plugin's package.json version string -- which broke in exactly the way
- * a real user hit: across many rebuilds during development the version
- * never changed, so an *old* extracted binary (predating a later argv
- * change) kept being reused after every reinstall, silently, with no
- * indication anything was stale, until it failed to understand a new
- * flag and the launch broke in a confusing way. The fetch+write here
- * measures well under a second even for a several-MB binary (confirmed
- * live), so paying that cost on every launch is a small, predictable
- * price for never serving a stale binary again -- simpler and more
- * robust than a cache-invalidation scheme that has to correctly track
- * every reason the binary might have changed.
+ * Never trusts a file merely because it exists (an earlier version skipped
+ * extraction whenever the destination existed, keyed only on the plugin's
+ * version string -- across many rebuilds the version never changed, so an
+ * *old* binary kept being reused after every reinstall and broke in a
+ * confusing way). It compares the packed bytes with what is on disk instead.
+ *
+ * And it never overwrites the binary in place. Doing so is fatal on macOS:
+ * once a binary has been run, rewriting the same file makes the kernel
+ * reject the next launch from it, so the *second* reader tab opened in a
+ * session died immediately with SIGKILL ("stopped unexpectedly (exit code
+ * -9)"). Reproduced and fixed: if the bytes already match, nothing is
+ * written; otherwise the new binary is written to a temp file next to it
+ * and renamed over the old one (a new file, so helpers still running from
+ * the old one are unaffected and new launches are clean).
  */
 
 import { HelperMissingError } from "./errors.ts";
@@ -44,11 +44,24 @@ export interface ResolveHelperPathPackedOpts {
   fetchBytes: (url: string) => Promise<Uint8Array>;
   writeBytes: (path: string, bytes: Uint8Array) => Promise<unknown>;
   setExecutable: (path: string) => Promise<void>;
+  /** The current bytes at `path`, or null if there is no such file. */
+  readExisting: (path: string) => Promise<Uint8Array | null>;
+  /** Atomically renames `from` over `to` (replacing it). */
+  moveFile: (from: string, to: string) => Promise<unknown>;
+  removeFile?: (path: string) => Promise<unknown>;
+  /** Unique suffix for the temp file; injectable for tests. */
+  tempSuffix?: () => string;
+}
+
+export function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.byteLength !== b.byteLength) return false;
+  for (let i = 0; i < a.byteLength; i++) if (a[i] !== b[i]) return false;
+  return true;
 }
 
 /** @throws {UnsupportedPlatformError | HelperMissingError} */
 export async function resolveHelperPathPacked(opts: ResolveHelperPathPackedOpts): Promise<string> {
-  const { platform, arch, rootURI, destDir, pathJoin, fetchBytes, writeBytes, setExecutable } = opts;
+  const { platform, arch, rootURI, destDir, pathJoin, fetchBytes, writeBytes, setExecutable, readExisting, moveFile, removeFile } = opts;
 
   const platformDir = resolvePlatformDir(platform, arch);
   const fileName = helperFileName(platformDir);
@@ -64,7 +77,21 @@ export async function resolveHelperPathPacked(opts: ResolveHelperPathPackedOpts)
   if (!bytes || bytes.byteLength === 0) {
     throw new HelperMissingError(sourceURL);
   }
-  await writeBytes(destPath, bytes);
-  await setExecutable(destPath);
+
+  const existing = await readExisting(destPath).catch(() => null);
+  if (existing && sameBytes(existing, bytes)) {
+    return destPath; // already the right binary: touch nothing
+  }
+
+  const suffix = opts.tempSuffix ? opts.tempSuffix() : Math.random().toString(36).slice(2);
+  const tmpPath = `${destPath}.${suffix}.tmp`;
+  try {
+    await writeBytes(tmpPath, bytes);
+    await setExecutable(tmpPath);
+    await moveFile(tmpPath, destPath);
+  } catch (e) {
+    await removeFile?.(tmpPath)?.catch?.(() => {});
+    throw e;
+  }
   return destPath;
 }
