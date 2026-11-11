@@ -18,7 +18,7 @@ import {
 } from "./annotations.ts";
 import { HelperConnection, type HelperProcess } from "./helperConnection.ts";
 import {
-  capRenderScale, captureAnchor, clampScale, clipRect, computeLayout, currentPage, DEFAULT_VIEW, fitScale, pageAtOffset, referencePage, rectToView,
+  capRenderScale, captureAnchor, DEFAULT_ARRANGEMENT, isScrollMode, isSpreadMode, type Arrangement, type ScrollMode, type SpreadMode, clampScale, clipRect, computeLayout, currentPage, DEFAULT_VIEW, fitScale, pageAtOffset, referencePage, rectToView,
   scrollTopForAnchor, viewSize, viewToPage, visibleRange, type Layout, type ScrollAnchor, type ViewSettings,
 } from "./layout.ts";
 import type { PositionStore, SavedPosition } from "./positionStore.ts";
@@ -193,7 +193,8 @@ export class ReaderTab {
   private settings: ViewSettings = { ...DEFAULT_VIEW };
   private zoom: Zoom = { mode: "width" };
   private scale = 1; // css px per point
-  private layout: Layout = { tops: [], heights: [], widths: [], total: 0, maxWidth: 0 };
+  private arrange: Arrangement = { ...DEFAULT_ARRANGEMENT };
+  private layout: Layout = { tops: [], lefts: [], heights: [], widths: [], total: 0, maxWidth: 0 };
   private tool: Tool = null;
   private pageNow = 0;
   private initialDone = false;
@@ -383,7 +384,7 @@ export class ReaderTab {
   private onResized(w: number, h: number, dpr: number): void {
     this.viewport = { w, h, dpr };
     if (!this.started) return this.maybeStart();
-    if (this.zoom.mode !== "fixed") this.relayout();
+    if (this.zoom.mode !== "fixed" || this.arrange.scroll === "wrapped") this.relayout();
     else this.view.applyLayout(this.layout);
     this.scheduleRender(60);
   }
@@ -395,6 +396,7 @@ export class ReaderTab {
     const saved = this.d.positions.load(this.d.positionKey);
     if (saved) {
       this.settings = { rotation: saved.rotation, insets: saved.insets };
+      this.arrange = { scroll: isScrollMode(saved.scroll) ? saved.scroll : "vertical", spread: isSpreadMode(saved.spread) ? saved.spread : "none" };
       this.zoom = saved.zoom.mode === "fixed" ? { mode: "fixed", scale: saved.zoom.scale } : { mode: saved.zoom.mode };
     }
     this.view.buildPages(this.pages.length);
@@ -417,7 +419,7 @@ export class ReaderTab {
     // the current page diverges on documents that mix page sizes). The scrollbar gutter is reserved
     // (scrollbar-gutter: stable), so clientWidth is the usable width.
     const page = this.pages[referencePage(this.pages, this.settings)]!;
-    return clampScale(fitScale(this.zoom.mode, page, this.settings, vp.w, vp.h, 24));
+    return clampScale(fitScale(this.zoom.mode, page, this.settings, vp.w, vp.h, 24, this.arrange.spread === "none" ? 1 : 2));
   }
 
   /** Recomputes scale and layout, keeping the part of the document under the viewport centre in place. */
@@ -426,7 +428,7 @@ export class ReaderTab {
     const vh = this.view.viewport.height;
     const anchor: ScrollAnchor | null = this.layout.tops.length ? captureAnchor(this.layout, this.view.scroller.scrollTop, vh / 2) : null;
     this.scale = this.computeScale();
-    this.layout = computeLayout(this.pages, this.settings, this.scale);
+    this.layout = this.computeLayoutNow();
     this.view.applyLayout(this.layout);
     if (anchor && this.initialDone) this.view.scroller.scrollTop = scrollTopForAnchor(this.layout, anchor);
     this.view.setZoomLabel(this.scale * 100);
@@ -435,10 +437,44 @@ export class ReaderTab {
     this.scheduleRender(this.rendered.size ? 90 : 0);
   }
 
+  private computeLayoutNow(): Layout {
+    return computeLayout(this.pages, this.settings, this.scale, 8, 8, this.arrange, this.viewport?.w ?? Infinity);
+  }
+
+  setArrangement(next: Partial<Arrangement>): void {
+    const arrange = { ...this.arrange, ...next };
+    if (arrange.scroll === this.arrange.scroll && arrange.spread === this.arrange.spread) return;
+    const page = this.pageNow;
+    // "fit width" in wrapped mode would be one page per row; start from a zoom that shows several
+    if (arrange.scroll === "wrapped" && this.arrange.scroll !== "wrapped" && this.zoom.mode !== "fixed") {
+      this.zoom = { mode: "fixed", scale: clampScale(this.scale * 0.5) };
+    }
+    this.arrange = arrange;
+    this.relayout();
+    this.scrollToPage(page);
+    this.requestVisible();
+    this.schedulePositionSave();
+  }
+
   private scrollToPage(page: number, fraction = 0): void {
     const p = Math.min(Math.max(page, 0), this.pages.length - 1);
     this.view.scroller.scrollTop = Math.max(0, this.layout.tops[p]! + fraction * this.layout.heights[p]! - 8);
     this.onScrolled();
+  }
+
+  /** First page of the row after (dir 1) or before (dir -1) the current one; rows hold several pages in spreads. */
+  private stepRow(dir: 1 | -1): number {
+    const tops = this.layout.tops;
+    const cur = this.pageNow;
+    if (!tops.length) return cur + dir;
+    if (dir === 1) {
+      let p = cur;
+      while (p < tops.length && tops[p] === tops[cur]) p++;
+      return p;
+    }
+    let p = cur - 1;
+    while (p > 0 && tops[p - 1] === tops[p]) p--;
+    return Math.max(p, 0);
   }
 
   goToPage(page: number): void {
@@ -463,7 +499,7 @@ export class ReaderTab {
     // keep the point under the pointer (or the viewport centre) fixed
     const prev = this.layout.tops.length ? captureAnchor(this.layout, this.view.scroller.scrollTop, anchorOffset ?? vh / 2) : null;
     this.scale = next;
-    this.layout = computeLayout(this.pages, this.settings, this.scale);
+    this.layout = this.computeLayoutNow();
     this.view.applyLayout(this.layout);
     if (prev) this.view.scroller.scrollTop = scrollTopForAnchor(this.layout, prev);
     this.view.setZoomLabel(this.scale * 100);
@@ -724,8 +760,8 @@ export class ReaderTab {
   }
 
   // ======================================================================= pointer: selection, links, annotations
-  private pageUnder(clientY: number): number {
-    const p = this.view.pageAtPoint(this.view.viewport.left + 10, clientY);
+  private pageUnder(clientX: number, clientY: number): number {
+    const p = this.view.pageAtPoint(clientX, clientY) ?? this.view.pageAtPoint(this.view.viewport.left + 10, clientY);
     if (p !== null) return p;
     return pageAtOffset(this.layout, this.view.scroller.scrollTop + clientY - this.view.viewport.top);
   }
@@ -755,7 +791,7 @@ export class ReaderTab {
   private onPointer(e: PagePointer): void {
     if (!this.started) return;
     if (e.type === "leave") return this.view.setCursor("");
-    const page = this.pageUnder(e.clientY);
+    const page = this.pageUnder(e.clientX, e.clientY);
     const pt = this.clientToPage(page, e.clientX, e.clientY);
 
     if (e.type === "move" && !this.drag) {
@@ -1145,6 +1181,14 @@ export class ReaderTab {
       { label: "Rotate left", icon: "rotate-ccw", run: () => this.rotate(-90) },
       { label: "Crop white margins", icon: "crop", checked: !!this.settings.insets, run: () => this.toggleCrop() },
       { separator: true, label: "" },
+      { label: "Vertical scrolling", checked: this.arrange.scroll === "vertical", run: () => this.setArrangement({ scroll: "vertical" }) },
+      { label: "Wrapped scrolling (several pages per row)", checked: this.arrange.scroll === "wrapped", run: () => this.setArrangement({ scroll: "wrapped" }) },
+      { separator: true, label: "" },
+      { label: "No spreads (single pages)", checked: this.arrange.spread === "none", run: () => this.setArrangement({ spread: "none" }) },
+      { label: "Odd spreads (1-2, 3-4, …)", checked: this.arrange.spread === "odd", run: () => this.setArrangement({ spread: "odd" }) },
+      { label: "Even spreads (1, 2-3, 4-5, …)", checked: this.arrange.spread === "even", run: () => this.setArrangement({ spread: "even" }) },
+      { separator: true, label: "" },
+      { label: "Match Zotero (auto)", icon: "sun", checked: s.theme === "auto", run: () => this.setTheme("auto") },
       { label: "Light pages", icon: "sun", checked: s.theme === "light", run: () => this.setTheme("light") },
       { label: "Dark pages", icon: "moon", checked: s.theme === "dark", run: () => this.setTheme("dark") },
       { label: "Sepia pages", icon: "book-open", checked: s.theme === "sepia", run: () => this.setTheme("sepia") },
@@ -1181,9 +1225,9 @@ export class ReaderTab {
     e.stopPropagation();
     switch (action.type) {
       case "next":
-        return this.goToPage(this.pageNow + 1);
+        return this.goToPage(this.stepRow(1));
       case "prev":
-        return this.goToPage(this.pageNow - 1);
+        return this.goToPage(this.stepRow(-1));
       case "first":
         return this.goToPage(0);
       case "last":
@@ -1213,7 +1257,7 @@ export class ReaderTab {
     const p = Math.min(this.pageNow, Math.max(0, this.pages.length - 1));
     const h = this.layout.heights[p] || 1;
     const fraction = Math.min(1, Math.max(0, (this.view.scroller.scrollTop + 8 - (this.layout.tops[p] ?? 0)) / h));
-    return { page: p, fraction, zoom: this.zoom.mode === "fixed" ? { mode: "fixed", scale: this.zoom.scale } : { mode: this.zoom.mode }, rotation: this.settings.rotation, insets: this.settings.insets };
+    return { page: p, fraction, zoom: this.zoom.mode === "fixed" ? { mode: "fixed", scale: this.zoom.scale } : { mode: this.zoom.mode }, rotation: this.settings.rotation, insets: this.settings.insets, scroll: this.arrange.scroll, spread: this.arrange.spread };
   }
 
   private schedulePositionSave(): void {

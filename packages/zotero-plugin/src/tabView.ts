@@ -458,7 +458,7 @@ export class ReaderView {
     }
   }
 
-  /** Positions every page box from a layout (px). Pages are centred horizontally. */
+  /** Positions every page box from a layout (px). Rows of pages are centred horizontally. */
   applyLayout(layout: Layout): void {
     const width = Math.max(this.scroller.clientWidth, layout.maxWidth + 16);
     this.pagesEl.style.width = `${width}px`;
@@ -466,7 +466,7 @@ export class ReaderView {
     for (let i = 0; i < this.pageEls.length; i++) {
       const s = this.pageEls[i]!.style;
       s.top = `${layout.tops[i]}px`;
-      s.left = `${(width - layout.widths[i]!) / 2}px`;
+      s.left = `${(width - layout.maxWidth) / 2 + layout.lefts[i]!}px`;
       s.width = `${layout.widths[i]}px`;
       s.height = `${layout.heights[i]}px`;
     }
