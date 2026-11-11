@@ -267,7 +267,7 @@ impl<E: DocumentEngine> Server<E> {
             },
             Command::Text(page) => match self.engine.page_text(page) {
                 Ok(t) => {
-                    let lines: Vec<Value> = t.lines.iter().map(|l| json!({"b": l.bbox, "t": l.text, "x": l.xs})).collect();
+                    let lines: Vec<Value> = t.lines.iter().map(|l| json!({"b": l.bbox, "t": l.text, "x": l.xs, "s": l.sup})).collect();
                     (vec![json!({"event": "text", "page": page, "lines": lines})], false)
                 }
                 Err(e) => (vec![err("text", e.to_string())], false),
@@ -313,7 +313,7 @@ impl<E: DocumentEngine> Server<E> {
             },
             Command::Links(page) => match self.engine.links(page) {
                 Ok(l) => {
-                    let links: Vec<Value> = l.iter().map(|x| json!({"r": x.rect, "p": x.page, "u": x.uri})).collect();
+                    let links: Vec<Value> = l.iter().map(|x| json!({"r": x.rect, "p": x.page, "u": x.uri, "d": x.dest_at})).collect();
                     (vec![json!({"event": "links", "page": page, "links": links})], false)
                 }
                 Err(e) => (vec![err("links", e.to_string())], false),
