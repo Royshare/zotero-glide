@@ -28,17 +28,17 @@ MUPDF_THIRDPARTY = [
     ("harfbuzz", "MIT (Old MIT)", ["COPYING"]),
     ("jbig2dec", "AGPL-3.0-or-later", ["COPYING"]),
     ("lcms2", "MIT", ["LICENSE"]),
-    ("libjpeg", "IJG (Independent JPEG Group) license", []),  # license text not in the vendored tree; see KNOWN_GAPS
+    ("libjpeg", "IJG (Independent JPEG Group) license", []),  # the vendored copy omits the README: see IJG_README
     ("openjpeg", "BSD-2-Clause", ["LICENSE"]),
     ("zlib", "Zlib", ["LICENSE"]),
 ]
 
+# MuPDF's vendored libjpeg (IJG 9f) omits the README that carries the IJG license, but the license requires that
+# README to accompany any distribution of the source. A verbatim copy of the README from the IJG 9f release
+# (https://www.ijg.org/files/jpegsrc.v9f.tar.gz) is kept in licenses/ and shipped with the source archive.
+IJG_README = f"{ROOT}/licenses/libjpeg-ijg-9f-README.txt"
 # Things a release must still resolve; printed in the generated file so they cannot be forgotten.
-KNOWN_GAPS = [
-    "libjpeg (c) 1991-1998 Thomas G. Lane, 2002-2022 Guido Vollbeding, Independent JPEG Group: the vendored "
-    "copy in MuPDF does not include the README that carries the IJG license conditions (its source headers "
-    "refer to it). Before the first public release, add the text of that README (https://www.ijg.org) here.",
-]
+KNOWN_GAPS: list[str] = []
 
 def cargo_metadata(target):
     out = subprocess.run(["cargo", "metadata", "--format-version", "1", "--locked", "--filter-platform", target],
@@ -92,13 +92,18 @@ def main():
     md = mupdf_dir(pkgs)
     for name, lic, files in MUPDF_THIRDPARTY:
         lines.append(f"| {name} | {lic} |")
+        if name == "libjpeg":
+            add_text("libjpeg (MuPDF)", "libjpeg (IJG 9f) -- README, verbatim", read(IJG_README))
         for f in files:
             p = f"{md}/thirdparty/{name}/{f}"
             if os.path.exists(p):
                 add_text(f"{name} (MuPDF)", f"{name} -- {f}", read(p))
             else:
                 sys.exit(f"missing license file: {p}")
-    lines += ["", "**Known gaps (must be resolved before a public release):**", ""] + [f"- {g}" for g in KNOWN_GAPS]
+    lines += ["", "**This software is based in part on the work of the Independent JPEG Group.** (Required by the IJG",
+              "license when only executable code is distributed. The full IJG README is reproduced below.)"]
+    if KNOWN_GAPS:
+        lines += ["", "**Known gaps (must be resolved before a public release):**", ""] + [f"- {g}" for g in KNOWN_GAPS]
     lines += ["", "Bundled fonts: the URW++ base-14 \"Nimbus\" fonts (c) 2014 URW++ Design & Development, compiled",
               "into MuPDF (`base14-fonts` feature) and distributed with MuPDF under the AGPL (with the fonts'",
               "own font exception). No other fonts are bundled.", "",

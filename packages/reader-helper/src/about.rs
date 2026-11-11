@@ -36,7 +36,8 @@ fn license_text(url: Option<&str>, commit: Option<&str>) -> String {
          even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU\n\
          Affero General Public License for more details.\n\n\
          It statically links MuPDF (c) Artifex Software, Inc., also AGPL-3.0-or-later, and other third-party\n\
-         components; see THIRD_PARTY_NOTICES.md. The full license text is in LICENSE (shipped in the\n\
+         components; see THIRD_PARTY_NOTICES.md.\n\
+         This software is based in part on the work of the Independent JPEG Group. The full license text is in LICENSE (shipped in the\n\
          plugin's legal/ directory) and at https://www.gnu.org/licenses/agpl-3.0.html\n\n\
          {}\n",
         source_line(url, commit)
@@ -67,6 +68,8 @@ mod tests {
         assert!(info_for(&argv(&["--version"])).unwrap().contains(VERSION));
         assert!(info_for(&argv(&["-V"])).is_some());
         assert!(info_for(&argv(&["--file", "x.pdf", "--license"])).unwrap().contains("Affero"));
+        // IJG license condition (2): executables must state this
+        assert!(info_for(&argv(&["--license"])).unwrap().contains("based in part on the work of the Independent JPEG Group"));
         assert!(info_for(&argv(&["x.pdf"])).is_none());
     }
 
