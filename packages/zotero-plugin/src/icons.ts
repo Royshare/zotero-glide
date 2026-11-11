@@ -72,16 +72,21 @@ export function iconMarkup(name: IconName, size = 24): string {
   return `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${shapes}</svg>`;
 }
 
-/** The Zotero Glide mark (Phosphor "book-open-text", MIT), filled, 256 viewBox. Shown in the reader's toolbar so it is clear this is the plugin. */
+/** The Zotero Glide product icon (same artwork as addon/content/icons/zotero-glide.svg): open book with text lines and a tinted right page. Shown in the reader's toolbar so it is clear this is the plugin. */
 export function createGlideMark(doc: Document, size = 16): SVGElement {
   const NS = "http://www.w3.org/2000/svg";
   const svg = doc.createElementNS(NS, "svg");
   svg.setAttribute("viewBox", "0 0 256 256");
   svg.setAttribute("width", String(size));
   svg.setAttribute("height", String(size));
-  svg.setAttribute("fill", "currentColor");
+  const tint = doc.createElementNS(NS, "path");
+  tint.setAttribute("d", "M232,56L232,200L160,200C142.445,200 128,214.445 128,232L128,88C128,70.445 142.445,56 160,56L232,56Z");
+  tint.setAttribute("fill", "rgb(204,41,54)");
+  tint.setAttribute("fill-opacity", "0.2");
   const path = doc.createElementNS(NS, "path");
-  path.setAttribute("d", "M232,48L160,48C147.419,48 135.548,53.935 128,64C120.452,53.935 108.581,48 96,48L24,48C19.611,48 16,51.611 16,56L16,200C16,204.389 19.611,208 24,208L96,208C109.166,208 120,218.834 120,232C120,236.389 123.611,240 128,240C132.389,240 136,236.389 136,232C136,218.834 146.834,208 160,208L232,208C236.389,208 240,204.389 240,200L240,56C240,51.611 236.389,48 232,48ZM96,192L32,192L32,64L96,64C109.166,64 120,74.834 120,88L120,200C113.084,194.796 104.656,191.986 96,192ZM224,192L160,192C151.344,191.986 142.916,194.796 136,200L136,88C136,74.834 146.834,64 160,64L224,64L224,192Z");
-  svg.append(path);
+  path.setAttribute("fill", "currentColor");
+  path.setAttribute("d", "M232,48L160,48C147.419,48 135.548,53.935 128,64C120.452,53.935 108.581,48 96,48L24,48C19.611,48 16,51.611 16,56L16,200C16,204.389 19.611,208 24,208L96,208C109.166,208 120,218.834 120,232C120,236.389 123.611,240 128,240C132.389,240 136,236.389 136,232C136,218.834 146.834,208 160,208L232,208C236.389,208 240,204.389 240,200L240,56C240,51.611 236.389,48 232,48ZM96,192L32,192L32,64L96,64C109.166,64 120,74.834 120,88L120,200C113.084,194.796 104.656,191.986 96,192ZM224,192L160,192C151.344,191.986 142.916,194.796 136,200L136,88C136,74.834 146.834,64 160,64L224,64L224,192ZM160,88L200,88C204.389,88 208,91.611 208,96C208,100.389 204.389,104 200,104L160,104C155.611,104 152,100.389 152,96C152,91.611 155.611,88 160,88ZM208,128C208,132.389 204.389,136 200,136L160,136C155.611,136 152,132.389 152,128C152,123.611 155.611,120 160,120L200,120C204.389,120 208,123.611 208,128ZM208,160C208,164.389 204.389,168 200,168L160,168C155.611,168 152,164.389 152,160C152,155.611 155.611,152 160,152L200,152C204.389,152 208,155.611 208,160Z");
+  path.setAttribute("fill-rule", "nonzero");
+  svg.append(tint, path);
   return svg;
 }
