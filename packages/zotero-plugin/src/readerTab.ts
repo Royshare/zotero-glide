@@ -27,7 +27,14 @@ import { keyToAction } from "./readerKeys.ts";
 import {
   charOffsetOnPage, codePoints, hitTest, selectionRects, selectionText, wordRange, type PageText, type TextPos,
 } from "./textModel.ts";
+import { captionRegion, equationLines, equationRegion, findCrossRefs, indexCaptions, refLabel, type CrossRef, type Target } from "./crossrefs.ts";
 import { buildReferenceSet, findNumberedRunStart, findPageCitations, findReferenceStart, looksLikeCitationLabel, numberedEntryY, referenceAt, singleNumber, textInRect, type CiteMatch, type ReferenceSet } from "./citations.ts";
+
+interface HoverTarget {
+  key: string;
+  items?: () => Promise<CiteItem[]>;
+  preview?: () => Promise<{ label: string; url: string; go: () => void } | null>;
+}
 
 interface CiteItem {
   label: string;
@@ -244,6 +251,9 @@ export class ReaderTab {
   private citeShowTimer: number | null = null;
   private citeHideTimer: number | null = null;
   private citeKey: string | null = null;
+  private crossCache = new Map<number, CrossRef[]>();
+  private captions: ReturnType<typeof indexCaptions> | null = null;
+  private previewUrls = new Map<string, string>();
   private images = new Map<number, Rect[]>();
   private imagesPending = new Set<number>();
   private imagesAtDraw = new Map<number, boolean>();
@@ -286,6 +296,7 @@ export class ReaderTab {
         key: (e) => this.onKey(e),
         copy: (e) => this.onCopyEvent(e),
         toggleSidebar: () => this.setSidebar(!this.view.sidebarOpen),
+        back: () => this.goBack(),
         prevPage: () => this.goToPage(this.pageNow - 1),
         nextPage: () => this.goToPage(this.pageNow + 1),
         gotoPage: (n) => this.goToPage(n - 1),
@@ -791,8 +802,22 @@ export class ReaderTab {
     ]);
   }
 
+  /** Where we were before following a link or citation, so "back" can return (like Zotero's own reader). */
+  private backStack: number[] = [];
+  private goBack(): void {
+    const top = this.backStack.pop();
+    this.view.setCanGoBack(this.backStack.length > 0);
+    if (top === undefined) return;
+    this.view.scroller.scrollTop = top;
+    this.onScrolled(true);
+  }
+
   private scrollToPageY(page: number, y: number): void {
     if (!this.pages[page]) return;
+    const here = this.view.scroller.scrollTop;
+    if (this.backStack[this.backStack.length - 1] !== here) this.backStack.push(here);
+    if (this.backStack.length > 50) this.backStack.shift();
+    this.view.setCanGoBack(true);
     const v = this.pxRect(page, [0, Math.max(0, y - 6), 1, 1]);
     this.view.scroller.scrollTop = Math.max(0, this.layout.tops[page]! + v[1] - this.view.viewport.height / 4);
     this.onScrolled(true);
@@ -834,8 +859,60 @@ export class ReaderTab {
     return { page: at, y, text: (t && referenceAt(t, y)) || "" };
   }
 
+  private crossRefAt(page: number, x: number, y: number): CrossRef | null {
+    let list = this.crossCache.get(page);
+    if (!list) {
+      const text = this.texts.get(page);
+      if (!text) return null;
+      this.crossCache.set(page, (list = findCrossRefs(text)));
+    }
+    return list.find((m) => m.rects.some((r) => x >= r[0] - 1.5 && x <= r[0] + r[2] + 1.5 && y >= r[1] - 1.5 && y <= r[1] + r[3] + 1.5)) ?? null;
+  }
+
+  /** Where "Fig. 3" / "Table 2" / "Eq. (5)" points: the caption's page region, or the numbered equation. */
+  private async resolveCrossRef(ref: CrossRef, fromPage: number): Promise<Target | null> {
+    await this.loadTexts([...Array(this.pages.length).keys()]);
+    if (!this.captions) this.captions = indexCaptions([...this.texts].sort((a, b) => a[0] - b[0]).map(([page, text]) => ({ page, text })));
+    const label = refLabel(ref.kind, ref.n);
+    if (ref.kind === "eq") {
+      const order = [...this.texts.keys()].sort((a, b) => Math.abs(a - fromPage) - Math.abs(b - fromPage));
+      for (const page of order) {
+        const text = this.texts.get(page)!;
+        const info = this.pages[page];
+        const hit = equationLines(text, ref.n)[0];
+        if (hit === undefined || !info) continue;
+        const rect = equationRegion(text, hit, info.w, info.h);
+        return { kind: "eq", n: ref.n, page, rect, y: rect[1], label };
+      }
+      return null;
+    }
+    const cap = this.captions.get(`${ref.kind}${ref.n}`);
+    const info = cap ? this.pages[cap.page] : undefined;
+    const text = cap ? this.texts.get(cap.page) : undefined;
+    if (!cap || !info || !text) return null;
+    const rect = captionRegion(text, cap.line, info.w, info.h, ref.kind);
+    return { kind: ref.kind, n: ref.n, page: cap.page, rect, y: rect[1], label };
+  }
+
+  private async previewFor(ref: CrossRef): Promise<{ label: string; url: string; go: () => void } | null> {
+    const page = this.hoverPage;
+    const t = await this.resolveCrossRef(ref, page);
+    if (!t) return null;
+    const go = () => this.scrollToPageY(t.page, t.y);
+    const key = `${t.page}:${t.rect.map((v) => Math.round(v)).join(",")}`;
+    let url = this.previewUrls.get(key);
+    if (!url) {
+      const frame = await this.renderArea(t.page, t.rect, Math.min(3, Math.max(1, 560 / t.rect[2])) * (this.viewport?.dpr ?? 1));
+      const blob = frame ? await this.view.encodePng(frame.bytes, frame.width, frame.height) : null;
+      if (!blob) return null;
+      this.previewUrls.set(key, (url = this.view.blobUrl(blob)));
+    }
+    return { label: `${t.label} · page ${t.page + 1}`, url, go };
+  }
+  private hoverPage = 0;
+
   /** What hovering a citation shows: numbered markers resolve through the reference list, PDF links through their destination. */
-  private citeTargetAt(page: number, x: number, y: number): { key: string; items: () => Promise<CiteItem[]> } | null {
+  private citeTargetAt(page: number, x: number, y: number): HoverTarget | null {
     const cite = this.tool ? null : this.citationAt(page, x, y);
     if (cite) {
       return {
@@ -844,7 +921,11 @@ export class ReaderTab {
       };
     }
     const link = this.tool ? null : this.linkAt(page, x, y);
-    if (!link || link.p === null) return null;
+    if (!link) {
+      const ref = this.tool ? null : this.crossRefAt(page, x, y);
+      return ref ? { key: `${page}:${ref.key}`, preview: () => this.previewFor(ref) } : null;
+    }
+    if (link.p === null) return null;
     const label = textInRect(this.texts.get(page) ?? { lines: [] }, link.r);
     if (!looksLikeCitationLabel(label)) return null;
     return {
@@ -856,14 +937,22 @@ export class ReaderTab {
     };
   }
 
-  private onCitationHover(target: { key: string; items: () => Promise<CiteItem[]> } | null, clientX: number, clientY: number): void {
+  private onCitationHover(target: HoverTarget | null, clientX: number, clientY: number): void {
     if (target) {
       if (this.citeHideTimer) this.d.clearTimeout(this.citeHideTimer), (this.citeHideTimer = null);
       if (this.citeKey === target.key) return;
       if (this.citeShowTimer) this.d.clearTimeout(this.citeShowTimer);
       this.citeShowTimer = this.d.setTimeout(() => {
         this.citeShowTimer = null;
-        void target.items().then((items) => {
+        if (target.preview) {
+          void target.preview().then((p) => {
+            if (this.disposed || this.citeShowTimer !== null || !p) return;
+            this.citeKey = target.key;
+            this.view.showPreviewPopup(clientX, clientY + 8, p.label, p.url, p.go);
+          });
+          return;
+        }
+        void target.items!().then((items) => {
           if (this.disposed || this.citeShowTimer !== null) return;
           this.citeKey = target.key;
           this.view.showCitationPopup(clientX, clientY + 8, items, (i) => items[i]!.go(), (i, x, y) => this.showReferenceMenu(items[i]!, x, y));
@@ -1051,7 +1140,8 @@ export class ReaderTab {
     if (e.type === "move" && !this.drag) {
       if (!pt) return;
       const cite = this.tool ? null : this.citationAt(page, pt.x, pt.y);
-      const over = this.linkAt(page, pt.x, pt.y) || this.annotationAt(page, pt.x, pt.y) || cite;
+      this.hoverPage = page;
+      const over = this.linkAt(page, pt.x, pt.y) || this.annotationAt(page, pt.x, pt.y) || cite || (this.tool ? null : this.crossRefAt(page, pt.x, pt.y));
       const target = this.citeTargetAt(page, pt.x, pt.y);
       this.view.setCursor(over ? "pointer" : this.tool === "note" || this.tool === "image" ? "crosshair" : "");
       this.onCitationHover(target, e.clientX, e.clientY);
@@ -1122,6 +1212,13 @@ export class ReaderTab {
           }
           const link = this.linkAt(page, pt.x, pt.y);
           if (link) return this.followLink(link, page);
+          const ref = this.tool || this.citationAt(page, pt.x, pt.y) ? null : this.crossRefAt(page, pt.x, pt.y);
+          if (ref) {
+            this.view.hidePopups();
+            this.citeKey = null;
+            void this.resolveCrossRef(ref, page).then((t) => t && this.scrollToPageY(t.page, t.y));
+            return;
+          }
           const cite = this.tool ? null : this.citationAt(page, pt.x, pt.y);
           if (cite) {
             this.view.hidePopups();
@@ -1820,6 +1917,8 @@ export class ReaderTab {
         return void this.copySelection();
       case "selectAll":
         return this.selectAll();
+      case "back":
+        return this.goBack();
       case "escape":
         if (this.view.readingMode) return this.setReadingMode(false);
         this.clearSelection();
@@ -1864,6 +1963,8 @@ export class ReaderTab {
   }
 
   private dispose(): void {
+    for (const u of this.previewUrls.values()) this.view.revokeUrl(u);
+    this.previewUrls.clear();
     if (this.disposed) return;
     this.savePositionNow();
     this.disposed = true;

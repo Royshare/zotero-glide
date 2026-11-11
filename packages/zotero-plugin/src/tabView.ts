@@ -80,6 +80,7 @@ export interface ViewEvents {
   key(e: KeyboardEvent): void;
   copy(e: ClipboardEvent): void;
   toggleSidebar(): void;
+  back(): void;
   prevPage(): void;
   nextPage(): void;
   gotoPage(n: number): void;
@@ -224,6 +225,9 @@ const CSS = `
 .fr-fig{display:block;width:100%;border:1px solid var(--fr-border);border-radius:4px;background:#fff;overflow:hidden;cursor:default;margin-bottom:6px;box-sizing:border-box}
 .fr-fig:hover{outline:2px solid color-mix(in srgb,AccentColor 60%,transparent)}
 .fr-fig img{display:block;width:100%;height:100%;object-fit:contain}
+.fr-prev{display:block;max-width:min(580px,80vw);max-height:60vh;overflow:auto}
+.fr-prev-h{font-size:11px;font-weight:600;opacity:.7;padding:2px 4px 4px}
+.fr-prev img{display:block;max-width:100%;background:#fff;border-radius:3px}
 .fr-cite-list{width:360px;max-width:80vw;max-height:260px;overflow:auto}
 .fr-cite{display:flex;gap:8px;padding:5px 7px;border-radius:5px;font-size:12px;line-height:1.35;cursor:default}
 .fr-cite:hover{background:var(--fr-hover)}
@@ -337,6 +341,8 @@ export class ReaderView {
     const left = el("div", "fr-grp", undefined, bar);
     btn("panel-left", "Toggle sidebar", () => ev.toggleSidebar(), left);
     el("span", "fr-sep", undefined, left);
+    this.backBtn = btn("arrow-left", "Go back (Alt+Left / ⌘[)", () => ev.back(), left);
+    this.backBtn.disabled = true;
     btn("chevron-left", "Previous page", () => ev.prevPage(), left);
     this.pageInput = el("input", "fr-page-input", undefined, left);
     this.pageInput.type = "text";
@@ -710,6 +716,11 @@ export class ReaderView {
     this.popup.style.top = `${top}px`;
   }
 
+  private backBtn!: HTMLButtonElement;
+  setCanGoBack(can: boolean): void {
+    this.backBtn.disabled = !can;
+  }
+
   /** The mouse is over the popup (so a hover popup must not close under it). */
   popupOver = false;
 
@@ -738,6 +749,29 @@ export class ReaderView {
       list.append(row);
     });
     this.popup.append(list);
+    this.placePopup(clientX, clientY);
+  }
+
+  /** A picture of the figure, table or equation a reference points to; a click goes there. */
+  showPreviewPopup(clientX: number, clientY: number, label: string, url: string, go: () => void): void {
+    this.hidePopups();
+    const box = this.doc.createElementNS(XHTML, "div") as HTMLElement;
+    box.className = "fr-prev";
+    const h = this.doc.createElementNS(XHTML, "div") as HTMLElement;
+    h.className = "fr-prev-h";
+    h.textContent = label;
+    const img = this.doc.createElementNS(XHTML, "img") as HTMLImageElement;
+    img.draggable = false;
+    img.style.cursor = "pointer";
+    img.addEventListener("load", () => this.placePopup(clientX, clientY));
+    img.src = url;
+    box.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this.hidePopups();
+      go();
+    });
+    box.append(h, img);
+    this.popup.append(box);
     this.placePopup(clientX, clientY);
   }
 

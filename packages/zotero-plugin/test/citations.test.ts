@@ -159,3 +159,33 @@ test("stray numbered table rows do not turn an author-year list into a numeric o
   const set = buildReferenceSet([{ page: 1, text: refs }], { page: 1, line: 0 });
   assert.equal(set.mode, "ay");
 });
+
+import { findCrossRefs, indexCaptions, captionRegion, equationLines } from "../src/crossrefs.ts";
+
+test("equation numbers are not citations, but in-text (1) is", () => {
+  const refs = [line("References", {}, 700)].concat(Array.from({ length: 6 }, (_, i) => line(`${i + 1} Author ${i}, Journal, 20${10 + i}.`, {}, 710 + i * 10)));
+  const set = buildReferenceSet([{ page: 0, text: { lines: refs } }], { page: 0, line: 0 });
+  const eq = line("E = mc2                                                  (2)", {}, 100);
+  const alone = line("(3)", {}, 130);
+  const prose = line("as shown previously (1) in the text", {}, 160);
+  const text = { lines: [eq, alone, prose] };
+  const found = findPageCitations(text, set);
+  assert.deepEqual(found.map((c) => c.items.map((i) => i.label)), [["1"]]);
+  assert.deepEqual(equationLines({ lines: [eq, alone] }, 3), [1]);
+});
+
+test("figure and table references, captions and preview regions", () => {
+  const text = {
+    lines: [
+      line("As seen in Fig. 3a and Table 2, and Eq. (5) too, it works well enough here.", {}, 50),
+      { ...line("axis label", {}, 200), b: [50, 200, 40, 9] as [number, number, number, number] },
+      { ...line("Fig. 3. The result of the experiment on many cells in parallel.", {}, 400), b: [50, 400, 500, 9] as [number, number, number, number] },
+    ],
+  };
+  const refs = findCrossRefs(text);
+  assert.deepEqual(refs.map((r) => [r.kind, r.n, r.sub]), [["fig", 3, "a"], ["table", 2, ""], ["eq", 5, ""]]);
+  const caps = indexCaptions([{ page: 0, text }]);
+  assert.equal(caps.get("fig3")?.line, 2);
+  const r = captionRegion(text, 2, 612, 792, "fig");
+  assert.ok(r[1] < 200 && r[1] + r[3] >= 409);
+});

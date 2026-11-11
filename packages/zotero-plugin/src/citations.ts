@@ -296,11 +296,15 @@ function lookupAy(set: ReferenceSet, author: string, year: string): AyEntry[] {
   return set.ay.filter((e) => sameYear(e) && (e.surname === a || a.endsWith(" " + e.surname) || e.surname.endsWith(" " + a) || a.startsWith(e.surname + " ")));
 }
 
-/** Every resolvable citation on a page, with the page-space rectangles to hit-test and the entries it points to. */
-export function findPageCitations(text: PageText, set: ReferenceSet): CiteMatch[] {
-  const out: CiteMatch[] = [];
-  const claimed: Array<[number, number]> = []; // stream ranges already used
-  // one stream of the page's text, so a marker wrapped over two lines is still found
+export interface PageStream {
+  stream: string;
+  lineOf: number[];
+  idxOf: number[];
+  rectsFor(from: number, to: number): Rect[];
+}
+
+/** One stream of a page's text, so a marker wrapped over two lines is still found; maps stream offsets back to lines and rectangles. */
+export function pageStream(text: PageText): PageStream {
   const lineOf: number[] = [];
   const idxOf: number[] = [];
   let stream = "";
@@ -336,6 +340,35 @@ export function findPageCitations(text: PageText, set: ReferenceSet): CiteMatch[
     }
     return rects;
   };
+  return { stream, lineOf, idxOf, rectsFor };
+}
+
+/**
+ * Is the "(N)" at stream offsets [from, to) an equation number rather than a citation? Equation numbers sit
+ * at the right end of their line, either alone on it or after a gap (or after maths), never inside a sentence.
+ */
+export function isEquationNumber(text: PageText, ps: PageStream, from: number, to: number): boolean {
+  const li = ps.lineOf[from]!;
+  if (ps.lineOf[to - 1] !== li) return false;
+  const line = text.lines[li]!;
+  const chars = codePoints(line.t);
+  const a = ps.idxOf[from]!;
+  const b = ps.idxOf[to - 1]!;
+  if (chars.slice(b + 1).join("").trim() !== "") return false; // something follows: in running text
+  const before = chars.slice(0, a).join("");
+  if (before.trim() === "") return true; // "(12)" alone on its line
+  if (/[=+*/<>−±∑∫∂∇≈≤≥×·]\s*[\w)\]}]*\s*$/.test(before) && !/[a-z]{3,}\s*$/.test(before)) return true; // the line ends in maths
+  let k = a - 1;
+  while (k > 0 && /\s/.test(chars[k]!)) k--;
+  return (line.x[a] ?? 0) - (line.x[k + 1] ?? 0) > 12; // a wide gap before it: a right-aligned number
+}
+
+/** Every resolvable citation on a page, with the page-space rectangles to hit-test and the entries it points to. */
+export function findPageCitations(text: PageText, set: ReferenceSet): CiteMatch[] {
+  const out: CiteMatch[] = [];
+  const claimed: Array<[number, number]> = []; // stream ranges already used
+  const ps = pageStream(text);
+  const { stream, rectsFor } = ps;
   const free = (a: number, b: number) => !claimed.some(([x, y]) => a < y && b > x);
   const add = (from: number, to: number, items: CiteItem[]) => {
     if (!items.length || !free(from, to)) return;
@@ -371,6 +404,8 @@ export function findPageCitations(text: PageText, set: ReferenceSet): CiteMatch[
         if (ri === 2) {
           const before = stream.slice(Math.max(0, m.index - 14), m.index);
           if (/(?:Eqs?|Equations?|Figs?|Figures?|Tables?|Sec|Section|Ref)\.?\s*$/i.test(before) || /[=+*/<>−-]\s*$/.test(before) || m.index < 3) continue;
+          if (/\b(?:Eqs?|Equations?)\.?[^.;]{0,30}$/i.test(stream.slice(Math.max(0, m.index - 40), m.index))) continue; // "Eqs. (3) and (4)"
+          if (/^\(\d{1,3}\)$/.test(m[0]) && isEquationNumber(text, ps, m.index, m.index + m[0].length)) continue;
         }
         const nums = parseNumberList(m[grp]!.replace(/\s*(?:and|&)\s*/g, ","));
         if (nums) add(m.index, m.index + m[0].length, lookup(nums));
