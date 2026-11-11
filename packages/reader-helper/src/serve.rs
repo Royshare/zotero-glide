@@ -1,72 +1,87 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Zotero Fast Reader contributors
 
-//! Headless "serve" mode: the helper has no window; a host (the Zotero
-//! plugin's reader *tab*) drives it over stdin/stdout and shows the pixels
-//! itself. See docs/adr/002-in-tab-reader.md.
+//! Headless "serve" mode: the helper has no window; a host (the Zotero plugin's reader *tab*) drives it
+//! over stdin/stdout and does all layout, scrolling, selection and UI itself. See docs/adr/002 and 003.
 //!
-//! Protocol: newline-delimited JSON, one object per line.
+//! The helper is deliberately **stateless per request**: the host decides which pages to show and at what
+//! scale (continuous scrolling, zoom, rotation, crop), asks for exactly those pages, and keeps only what is
+//! visible. Newline-delimited JSON, one object per line.
 //!
 //! stdin (host -> helper):
-//!   {"cmd":"viewport","width":W,"height":H,"dpr":2.0}   physical px
-//!   {"cmd":"goto","page":N}                              1-indexed
-//!   {"cmd":"next"} {"cmd":"prev"}
-//!   {"cmd":"zoom","factor":1.15}
-//!   {"cmd":"fit","mode":"width"|"page"}
-//!   {"cmd":"search","query":"..."}
-//!   {"cmd":"search_next","query":"...","backwards":false}
-//!   {"cmd":"clear_search"}
-//!   {"cmd":"trim"}     free page memory (tab went to background)
-//!   {"cmd":"resume"}   re-render (tab shown again)
+//!   {"cmd":"render","id":N,"page":P,"scale":S,"rotate":R,"clip":[x,y,w,h]|null}
+//!       P is 0-indexed; S pixels per point; R 0/90/180/270 clockwise; clip in page space, pre-rotation.
+//!   {"cmd":"text","page":P}          line boxes + per-character x boundaries (page space)
+//!   {"cmd":"search","query":"..."}    every hit in the document, as rectangles per page
+//!   {"cmd":"outline"}                 the document outline
+//!   {"cmd":"links","page":P}          internal and external links on a page
+//!   {"cmd":"margins"}                 uniform white-margin insets, sampled over the document
+//!   {"cmd":"export","path":"...","annotations":[{"page","kind","rects","color","contents"}]}
+//!   {"cmd":"trim"}                    drop page memory and the open document (tab went to background)
 //!   {"cmd":"quit"}
 //!
 //! stdout (helper -> host):
-//!   {"event":"ready","pageCount":N}
-//!   {"event":"frame","seq":S,"path":"...","width":w,"height":h,
-//!    "page":P,"pageCount":N,"zoomPct":P,"zoomMode":"width|page|fixed",
-//!    "highlights":[[x,y,w,h],...],"search":{"pages":K,"total":T,"index":I}}
-//!   {"event":"error","message":"..."}
+//!   {"event":"ready","pageCount":N,"pages":[{"w","h","m":[a,b,c,d,e,f]}]}   m: PDF space -> page space
+//!   {"event":"frame","id","page","scale","width","height","path"}          raw opaque RGBA8 in a file
+//!   {"event":"skipped","id"}          a render superseded by a later one for the same page in the same batch
+//!   {"event":"text",...} {"event":"search",...} {"event":"outline",...} {"event":"links",...}
+//!   {"event":"margins","insets":[l,t,r,b]|null} {"event":"exported","path","count"}
+//!   {"event":"error","message":"...","cmd":"..."}
 //!
-//! A frame is the whole page as tightly packed opaque RGBA8 in
-//! `<frame-dir>/frame-<seq>.rgba`; the host reads it and deletes it. The
-//! page can be taller than the viewport -- the host scrolls it natively.
+//! Frames are files, not pipe data: a retina page is 10-25 MB. The host reads then deletes them; the helper
+//! also deletes frames older than the newest `KEEP_FRAMES` so a slow host cannot fill the disk.
 //!
-//! Commands that arrive while a render is pending are coalesced: all
-//! queued commands are applied first, then one frame is rendered. A
-//! mouse-wheel / resize burst therefore costs one render, not one each.
-//! stdin EOF (host died) exits, so the helper can never be orphaned.
+//! Commands that arrive together are applied as one batch: of several `render`s for the same page only the
+//! last is executed (the earlier ids get `skipped`). stdin EOF exits, so the helper can never be orphaned.
 //!
-//! Memory: on macOS launch this with `MallocSpaceEfficient=1` in the
-//! environment (the plugin does; libmalloc only reads it at process start).
-//! Otherwise the allocator keeps every freed page buffer resident -- measured
-//! 2x the steady-state footprint, and a `trim` returning nothing. See
-//! scripts/benchmark-serve.py and STATUS.md.
+//! Memory: on macOS launch with `MallocSpaceEfficient=1` and on Linux with `MALLOC_MMAP_THRESHOLD_=1048576`
+//! (the plugin does); otherwise the allocator keeps freed page buffers resident. See scripts/benchmark-serve.py.
 
-use crate::engine::DocumentEngine;
+use crate::engine::{DocumentEngine, ExportAnnotation, ExportKind, OutlineItem};
 use crate::frame::write_opaque_rgba;
 use crate::log;
-use crate::session::ReaderSession;
-use crate::state::{ReaderState, ZoomMode};
 use serde_json::{Value, json};
+use std::collections::VecDeque;
 use std::fs;
 use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
 use std::sync::mpsc;
 
+const KEEP_FRAMES: usize = 12;
+/// Hard ceiling on one frame (pixels), whatever the host asks for: 40M px = 160 MB of RGBA. The host stays
+/// well under this (it caps at 16M); this protects memory if a client asks for an absurd scale.
+const MAX_FRAME_PIXELS: f32 = 40_000_000.0;
+const MAX_SEARCH_RECTS: usize = 20_000;
+const MARGIN_SAMPLE_PAGES: u32 = 24;
+const MARGIN_PADDING_PT: f32 = 6.0;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Command {
-    Viewport { width: u32, height: u32, dpr: f32 },
-    Goto(u32),
-    Next,
-    Prev,
-    Zoom(f32),
-    Fit(ZoomMode),
+    Render { id: u64, page: u32, scale: f32, rotate: u32, clip: Option<[f32; 4]> },
+    Text(u32),
     Search(String),
-    SearchNext { query: String, backwards: bool },
-    ClearSearch,
+    Outline,
+    Links(u32),
+    Margins,
+    Export { path: PathBuf, annotations: Vec<ExportAnnotation> },
     Trim,
-    Resume,
     Quit,
+}
+
+fn f4(v: &Value) -> Option<[f32; 4]> {
+    let a = v.as_array()?;
+    if a.len() != 4 {
+        return None;
+    }
+    let mut out = [0.0; 4];
+    for (i, x) in a.iter().enumerate() {
+        let n = x.as_f64()?;
+        if !n.is_finite() {
+            return None;
+        }
+        out[i] = n as f32;
+    }
+    Some(out)
 }
 
 pub fn parse_command(line: &str) -> Result<Command, String> {
@@ -79,199 +94,266 @@ pub fn parse_command(line: &str) -> Result<Command, String> {
             .ok_or_else(|| format!("{cmd}: missing/invalid \"{k}\""))
     };
     let s = |k: &str| -> Result<String, String> {
-        v.get(k)
-            .and_then(Value::as_str)
-            .map(str::to_string)
-            .ok_or_else(|| format!("{cmd}: missing/invalid \"{k}\""))
+        v.get(k).and_then(Value::as_str).map(str::to_string).ok_or_else(|| format!("{cmd}: missing/invalid \"{k}\""))
     };
     Ok(match cmd {
-        "viewport" => Command::Viewport {
-            width: u("width")?.max(1),
-            height: u("height")?.max(1),
-            dpr: v.get("dpr").and_then(Value::as_f64).unwrap_or(1.0).clamp(0.5, 8.0) as f32,
-        },
-        "goto" => Command::Goto(u("page")?),
-        "next" => Command::Next,
-        "prev" => Command::Prev,
-        "zoom" => Command::Zoom(
-            v.get("factor")
+        "render" => {
+            let scale = v
+                .get("scale")
                 .and_then(Value::as_f64)
-                .filter(|f| f.is_finite() && *f > 0.0)
-                .ok_or("zoom: missing/invalid \"factor\"")? as f32,
-        ),
-        "fit" => Command::Fit(match s("mode")?.as_str() {
-            "width" => ZoomMode::FitWidth,
-            "page" => ZoomMode::FitPage,
-            other => return Err(format!("fit: unknown mode {other:?}")),
-        }),
+                .filter(|s| s.is_finite() && *s > 0.0)
+                .ok_or("render: missing/invalid \"scale\"")?
+                .clamp(0.05, 16.0) as f32;
+            let rotate = v.get("rotate").and_then(Value::as_u64).unwrap_or(0) as u32;
+            if rotate % 90 != 0 {
+                return Err(format!("render: rotate must be a multiple of 90, got {rotate}"));
+            }
+            let clip = match v.get("clip") {
+                None | Some(Value::Null) => None,
+                Some(c) => Some(f4(c).ok_or("render: \"clip\" must be [x, y, w, h]")?),
+            };
+            Command::Render { id: v.get("id").and_then(Value::as_u64).unwrap_or(0), page: u("page")?, scale, rotate: rotate % 360, clip }
+        }
+        "text" => Command::Text(u("page")?),
         "search" => Command::Search(s("query")?),
-        "search_next" => Command::SearchNext {
-            query: s("query")?,
-            backwards: v.get("backwards").and_then(Value::as_bool).unwrap_or(false),
-        },
-        "clear_search" => Command::ClearSearch,
+        "outline" => Command::Outline,
+        "links" => Command::Links(u("page")?),
+        "margins" => Command::Margins,
+        "export" => {
+            let mut annotations = Vec::new();
+            for a in v.get("annotations").and_then(Value::as_array).ok_or("export: missing \"annotations\"")? {
+                let kind = match a.get("kind").and_then(Value::as_str) {
+                    Some("highlight") => ExportKind::Highlight,
+                    Some("underline") => ExportKind::Underline,
+                    Some("note") => ExportKind::Note,
+                    other => return Err(format!("export: unknown annotation kind {other:?}")),
+                };
+                let rects = a
+                    .get("rects")
+                    .and_then(Value::as_array)
+                    .ok_or("export: annotation missing \"rects\"")?
+                    .iter()
+                    .map(|r| f4(r).ok_or("export: bad rect"))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let c = a.get("color").and_then(Value::as_array).map(|c| c.iter().filter_map(Value::as_f64).collect::<Vec<_>>());
+                let color = match c.as_deref() {
+                    Some([r, g, b]) => [*r as f32, *g as f32, *b as f32],
+                    _ => [1.0, 0.83, 0.0],
+                };
+                annotations.push(ExportAnnotation {
+                    page: a.get("page").and_then(Value::as_u64).ok_or("export: annotation missing \"page\"")? as u32,
+                    kind,
+                    rects,
+                    color,
+                    contents: a.get("contents").and_then(Value::as_str).unwrap_or("").to_string(),
+                });
+            }
+            Command::Export { path: PathBuf::from(s("path")?), annotations }
+        }
         "trim" => Command::Trim,
-        "resume" => Command::Resume,
         "quit" => Command::Quit,
         other => return Err(format!("unknown cmd {other:?}")),
     })
 }
 
-/// What the main loop should do after a command was applied.
-#[derive(Debug, PartialEq)]
-pub enum Flow {
-    /// State changed -- a (coalesced) frame is needed.
-    Render,
-    /// State changed in a way that needs no frame.
-    Quiet,
-    Quit,
+/// Uniform insets `[l, t, r, b]` (points) to crop from every page, from the ink boxes of sampled pages.
+/// Pages with no ink are ignored; the insets are the *smallest* margins seen, so nothing that is drawn on
+/// any sampled page is ever cut, minus a small padding. Returns None if every sampled page is blank or the
+/// crop would remove less than 2 pt per side.
+pub fn margins_from_boxes(boxes: &[(Option<[f32; 4]>, (f32, f32))]) -> Option<[f32; 4]> {
+    let mut ins = [f32::MAX; 4];
+    let mut any = false;
+    for (b, (w, h)) in boxes {
+        let Some([x0, y0, x1, y1]) = b else { continue };
+        any = true;
+        ins[0] = ins[0].min(*x0);
+        ins[1] = ins[1].min(*y0);
+        ins[2] = ins[2].min(w - x1);
+        ins[3] = ins[3].min(h - y1);
+    }
+    if !any {
+        return None;
+    }
+    let out = ins.map(|v| (v - MARGIN_PADDING_PT).max(0.0));
+    if out.iter().all(|v| *v < 2.0) { None } else { Some(out) }
 }
 
 pub struct Server<E: DocumentEngine> {
-    session: ReaderSession<E>,
-    viewport: (u32, u32),
-    dpr: f32,
+    engine: E,
     frame_dir: PathBuf,
     seq: u64,
-    suspended: bool,
-    /// Last frame file written, so an unconsumed one is removed when the
-    /// next replaces it (bounded disk use even if the host is slow).
-    last_frame: Option<PathBuf>,
+    written: VecDeque<PathBuf>,
 }
 
 impl<E: DocumentEngine> Server<E> {
-    pub fn new(engine: E, state: ReaderState, frame_dir: PathBuf) -> Self {
-        Self {
-            // Radius 0: hold only the page being shown (see session.rs).
-            session: ReaderSession::with_cache_radius(engine, state, 0),
-            viewport: (900, 1150),
-            dpr: 1.0,
-            frame_dir,
-            seq: 0,
-            suspended: false,
-            last_frame: None,
-        }
+    pub fn new(engine: E, frame_dir: PathBuf) -> Self {
+        Self { engine, frame_dir, seq: 0, written: VecDeque::new() }
     }
 
-    pub fn session(&self) -> &ReaderSession<E> {
-        &self.session
+    pub fn engine(&self) -> &E {
+        &self.engine
     }
 
-    pub fn apply(&mut self, cmd: Command) -> Flow {
-        let vp = self.viewport;
-        match cmd {
-            Command::Viewport { width, height, dpr } => {
-                self.dpr = dpr;
-                if (width, height) != self.viewport {
-                    self.viewport = (width, height);
-                    self.session.invalidate_scale(self.viewport);
-                }
+    fn ready_event(&self) -> Value {
+        let pages: Vec<Value> = match self.engine.geometries() {
+            Ok(g) => g.iter().map(|p| json!({"w": p.width, "h": p.height, "m": p.matrix})).collect(),
+            Err(e) => {
+                log::debug(&format!("geometries failed: {e}"));
+                (0..self.engine.page_count()).map(|i| {
+                    let s = self.engine.page_size(i).unwrap_or(crate::engine::PageSize { width: 612.0, height: 792.0 });
+                    json!({"w": s.width, "h": s.height, "m": [1.0, 0.0, 0.0, -1.0, 0.0, s.height]})
+                }).collect()
             }
-            Command::Goto(n) => self.session.navigate_to(n.saturating_sub(1)),
-            Command::Next => self.session.navigate_to(self.session.state.page + 1),
-            Command::Prev => self.session.navigate_to(self.session.state.page.saturating_sub(1)),
-            Command::Zoom(f) => self.session.zoom_by(f, vp),
-            Command::Fit(mode) => self.session.set_zoom_mode(mode, vp),
-            Command::Search(q) => self.session.run_search(&q),
-            Command::SearchNext { query, backwards } => self.session.search_next(&query, backwards),
-            Command::ClearSearch => self.session.clear_search(),
-            Command::Trim => {
-                self.suspended = true;
-                self.session.trim();
-                return Flow::Quiet;
-            }
-            Command::Resume => self.suspended = false,
-            Command::Quit => return Flow::Quit,
-        }
-        if self.suspended { Flow::Quiet } else { Flow::Render }
-    }
-
-    fn zoom_mode_name(&self) -> &'static str {
-        match self.session.state.zoom_mode {
-            ZoomMode::FitWidth => "width",
-            ZoomMode::FitPage => "page",
-            ZoomMode::Fixed => "fixed",
-        }
-    }
-
-    /// Renders the current page, writes the frame file, and emits the
-    /// `frame` event. Render failures are reported as an `error` event, not
-    /// a crash.
-    pub fn emit_frame(&mut self, out: &mut impl Write) -> io::Result<()> {
-        let scale = self.session.effective_scale(self.viewport);
-        let Some(rendered) = self.session.prepare_frame(self.viewport) else {
-            return emit(out, json!({"event":"error","message":"render failed"}));
         };
-        let (w, h) = (rendered.width, rendered.height);
+        json!({"event": "ready", "pageCount": self.engine.page_count(), "pages": pages})
+    }
 
+    fn render(&mut self, id: u64, page: u32, scale: f32, rotate: u32, clip: Option<[f32; 4]>) -> Result<Value, String> {
+        let scale = self.capped_scale(page, scale);
+        let r = self.engine.render_view(page, scale, rotate, clip).map_err(|e| e.to_string())?;
         self.seq += 1;
         let path = self.frame_dir.join(format!("frame-{}.rgba", self.seq));
         let tmp = self.frame_dir.join(format!("frame-{}.tmp", self.seq));
-        // Streamed in small chunks: no second full-page buffer.
-        write_opaque_rgba(rendered, io::BufWriter::new(fs::File::create(&tmp)?))?;
-        fs::rename(&tmp, &path)?; // atomic: the host never sees a half-written frame
-        if let Some(prev) = self.last_frame.replace(path.clone()) {
-            let _ = fs::remove_file(prev); // no-op if the host already consumed it
+        write_opaque_rgba(&r, io::BufWriter::new(fs::File::create(&tmp).map_err(|e| e.to_string())?)).map_err(|e| e.to_string())?;
+        fs::rename(&tmp, &path).map_err(|e| e.to_string())?; // atomic: the host never sees a half-written frame
+        self.written.push_back(path.clone());
+        while self.written.len() > KEEP_FRAMES {
+            if let Some(old) = self.written.pop_front() {
+                let _ = fs::remove_file(old); // already consumed by the host: no-op
+            }
         }
+        log::debug(&format!("frame id={id} page={page} {}x{}", r.width, r.height));
+        Ok(json!({"event": "frame", "id": id, "page": page, "scale": scale, "width": r.width, "height": r.height, "path": path.to_string_lossy()}))
+    }
 
-        let page = self.session.state.page;
-        let highlights: Vec<[f32; 4]> = self
-            .session
-            .search_hits
-            .iter()
-            .filter(|hit| hit.page == page)
-            .flat_map(|hit| hit.quads.iter())
-            .map(|q| {
-                let xs = [q.ul.0, q.ur.0, q.ll.0, q.lr.0];
-                let ys = [q.ul.1, q.ur.1, q.ll.1, q.lr.1];
-                let min = |a: &[f32; 4]| a.iter().cloned().fold(f32::INFINITY, f32::min);
-                let max = |a: &[f32; 4]| a.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-                [min(&xs) * scale, min(&ys) * scale, (max(&xs) - min(&xs)) * scale, (max(&ys) - min(&ys)) * scale]
+    /// Lowers `scale` so the full-page render stays within `MAX_FRAME_PIXELS`.
+    fn capped_scale(&self, page: u32, scale: f32) -> f32 {
+        match self.engine.page_size(page) {
+            Ok(s) if s.width * s.height * scale * scale > MAX_FRAME_PIXELS => (MAX_FRAME_PIXELS / (s.width * s.height)).sqrt(),
+            _ => scale,
+        }
+    }
+
+    fn outline_json(items: &[OutlineItem]) -> Value {
+        Value::Array(items.iter().map(|i| json!({"t": i.title, "p": i.page, "u": i.uri, "c": Self::outline_json(&i.children)})).collect())
+    }
+
+    fn margins(&mut self) -> Value {
+        let n = self.engine.page_count();
+        let step = (n / MARGIN_SAMPLE_PAGES).max(1);
+        let mut boxes = Vec::new();
+        let mut p = 0;
+        while p < n && boxes.len() < MARGIN_SAMPLE_PAGES as usize {
+            let size = self.engine.page_size(p).map(|s| (s.width, s.height)).unwrap_or((612.0, 792.0));
+            boxes.push((self.engine.content_bbox(p).ok().flatten(), size));
+            p += step;
+        }
+        json!({"event": "margins", "insets": margins_from_boxes(&boxes)})
+    }
+
+    /// Runs one command, returning the events to emit and whether to quit.
+    pub fn handle(&mut self, cmd: Command) -> (Vec<Value>, bool) {
+        let err = |name: &str, m: String| json!({"event": "error", "cmd": name, "message": m});
+        match cmd {
+            Command::Render { id, page, scale, rotate, clip } => match self.render(id, page, scale, rotate, clip) {
+                Ok(v) => (vec![v], false),
+                Err(m) => (vec![err("render", format!("page {page}: {m}")), json!({"event": "skipped", "id": id})], false),
+            },
+            Command::Text(page) => match self.engine.page_text(page) {
+                Ok(t) => {
+                    let lines: Vec<Value> = t.lines.iter().map(|l| json!({"b": l.bbox, "t": l.text, "x": l.xs})).collect();
+                    (vec![json!({"event": "text", "page": page, "lines": lines})], false)
+                }
+                Err(e) => (vec![err("text", e.to_string())], false),
+            },
+            Command::Search(q) => match self.engine.search(&q) {
+                Ok(hits) => {
+                    let mut total = 0usize;
+                    let mut truncated = false;
+                    let mut out = Vec::new();
+                    for h in &hits {
+                        if total >= MAX_SEARCH_RECTS {
+                            truncated = true;
+                            break;
+                        }
+                        let rects: Vec<[f32; 4]> = h.quads.iter().map(|q| {
+                            let xs = [q.ul.0, q.ur.0, q.ll.0, q.lr.0];
+                            let ys = [q.ul.1, q.ur.1, q.ll.1, q.lr.1];
+                            let (x0, x1) = (xs.iter().cloned().fold(f32::MAX, f32::min), xs.iter().cloned().fold(f32::MIN, f32::max));
+                            let (y0, y1) = (ys.iter().cloned().fold(f32::MAX, f32::min), ys.iter().cloned().fold(f32::MIN, f32::max));
+                            [x0, y0, x1 - x0, y1 - y0]
+                        }).collect();
+                        total += rects.len();
+                        out.push(json!({"page": h.page, "rects": rects}));
+                    }
+                    (vec![json!({"event": "search", "query": q, "hits": out, "truncated": truncated})], false)
+                }
+                Err(e) => (vec![err("search", e.to_string())], false),
+            },
+            Command::Outline => match self.engine.outline() {
+                Ok(items) => (vec![json!({"event": "outline", "items": Self::outline_json(&items)})], false),
+                Err(e) => (vec![err("outline", e.to_string())], false),
+            },
+            Command::Links(page) => match self.engine.links(page) {
+                Ok(l) => {
+                    let links: Vec<Value> = l.iter().map(|x| json!({"r": x.rect, "p": x.page, "u": x.uri})).collect();
+                    (vec![json!({"event": "links", "page": page, "links": links})], false)
+                }
+                Err(e) => (vec![err("links", e.to_string())], false),
+            },
+            Command::Margins => (vec![self.margins()], false),
+            Command::Export { path, annotations } => match self.engine.export_annotated(&path, &annotations) {
+                Ok(n) => (vec![json!({"event": "exported", "path": path.to_string_lossy(), "count": n})], false),
+                Err(e) => (vec![err("export", e.to_string())], false),
+            },
+            Command::Trim => {
+                self.engine.release_caches();
+                (vec![], false)
+            }
+            Command::Quit => (vec![], true),
+        }
+    }
+
+    /// Of several renders for the same page within one batch, only the last runs; returns the ids dropped.
+    pub fn coalesce(cmds: Vec<Command>) -> (Vec<Command>, Vec<u64>) {
+        let mut last: std::collections::HashMap<u32, usize> = std::collections::HashMap::new();
+        for (i, c) in cmds.iter().enumerate() {
+            if let Command::Render { page, .. } = c {
+                last.insert(*page, i);
+            }
+        }
+        let mut skipped = Vec::new();
+        let kept = cmds
+            .into_iter()
+            .enumerate()
+            .filter_map(|(i, c)| match &c {
+                Command::Render { id, page, .. } if last.get(page) != Some(&i) => {
+                    skipped.push(*id);
+                    None
+                }
+                _ => Some(c),
             })
             .collect();
-        let hits = &self.session.search_hits;
-        let total: usize = hits.iter().map(|h| h.quads.len()).sum();
-
-        log::debug(&format!("frame seq={} page={page} {w}x{h}", self.seq));
-        emit(
-            out,
-            json!({
-                "event": "frame",
-                "seq": self.seq,
-                "path": path.to_string_lossy(),
-                "width": w,
-                "height": h,
-                "page": page + 1,
-                "pageCount": self.session.engine.page_count(),
-                "zoomPct": (scale / self.dpr * 100.0).round() as i64,
-                "zoomMode": self.zoom_mode_name(),
-                "highlights": highlights,
-                "search": { "pages": hits.len(), "total": total, "index": self.session.search_hit_index },
-            }),
-        )
+        (kept, skipped)
     }
 
     pub fn cleanup(&mut self) {
-        if let Some(p) = self.last_frame.take() {
+        for p in self.written.drain(..) {
             let _ = fs::remove_file(p);
         }
     }
 }
 
-fn emit(out: &mut impl Write, v: Value) -> io::Result<()> {
+fn emit(out: &mut impl Write, v: &Value) -> io::Result<()> {
     writeln!(out, "{v}")?;
     out.flush()
 }
 
-/// Runs the protocol loop until `quit` or stdin EOF. A reader thread feeds a
-/// channel so queued commands can be drained and coalesced before rendering.
-pub fn run<E: DocumentEngine, R: BufRead + Send + 'static, W: Write>(
-    mut server: Server<E>,
-    input: R,
-    out: &mut W,
-) -> io::Result<()> {
+/// Runs the protocol loop until `quit` or stdin EOF. A reader thread feeds a channel so queued commands can
+/// be drained and coalesced before rendering.
+pub fn run<E: DocumentEngine, R: BufRead + Send + 'static, W: Write>(mut server: Server<E>, input: R, out: &mut W) -> io::Result<()> {
     fs::create_dir_all(&server.frame_dir)?;
-    emit(out, json!({"event":"ready","pageCount": server.session.engine.page_count()}))?;
+    emit(out, &server.ready_event())?;
 
     let (tx, rx) = mpsc::channel::<String>();
     std::thread::spawn(move || {
@@ -286,29 +368,34 @@ pub fn run<E: DocumentEngine, R: BufRead + Send + 'static, W: Write>(
                 Err(_) => break,
             }
         }
-        // dropping tx == EOF
     });
 
     let result = (|| -> io::Result<()> {
-        'outer: loop {
-            let Ok(first) = rx.recv() else { break }; // EOF: host went away
-            let mut need_frame = false;
-            let mut pending = vec![first];
+        loop {
+            let Ok(first) = rx.recv() else { break }; // EOF: the host went away
+            let mut lines = vec![first];
             while let Ok(more) = rx.try_recv() {
-                pending.push(more);
+                lines.push(more);
             }
-            for line in pending {
+            let mut cmds = Vec::new();
+            for line in lines {
                 match parse_command(&line) {
-                    Ok(cmd) => match server.apply(cmd) {
-                        Flow::Render => need_frame = true,
-                        Flow::Quiet => {}
-                        Flow::Quit => break 'outer,
-                    },
-                    Err(message) => emit(out, json!({"event":"error","message":message}))?,
+                    Ok(c) => cmds.push(c),
+                    Err(message) => emit(out, &json!({"event": "error", "message": message}))?,
                 }
             }
-            if need_frame {
-                server.emit_frame(out)?;
+            let (cmds, skipped) = Server::<E>::coalesce(cmds);
+            for id in skipped {
+                emit(out, &json!({"event": "skipped", "id": id}))?;
+            }
+            for c in cmds {
+                let (events, quit) = server.handle(c);
+                for e in events {
+                    emit(out, &e)?;
+                }
+                if quit {
+                    return Ok(());
+                }
             }
         }
         Ok(())
@@ -321,204 +408,249 @@ pub fn run<E: DocumentEngine, R: BufRead + Send + 'static, W: Write>(
 mod tests {
     use super::*;
     use crate::engine::mupdf_engine::MuPdfDocumentEngine;
-    use crate::session::ZOOM_STEP;
     use std::io::Cursor;
-    use std::path::Path;
-
-    fn fixture() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures").join("sample.pdf")
-    }
 
     fn temp_dir(tag: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!("fr-serve-test-{tag}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&d);
+        fs::create_dir_all(&d).unwrap();
         d
     }
 
-    fn server(dir: &Path) -> Server<MuPdfDocumentEngine> {
-        let engine = MuPdfDocumentEngine::open(&fixture()).unwrap();
-        let state = ReaderState::new(fixture(), engine.page_count());
-        Server::new(engine, state, dir.to_path_buf())
+    fn server(tag: &str) -> (Server<MuPdfDocumentEngine>, PathBuf, PathBuf) {
+        let pdf = crate::testpdf::write_temp(tag, &crate::testpdf::standard());
+        let dir = temp_dir(tag);
+        (Server::new(MuPdfDocumentEngine::open(&pdf).unwrap(), dir.clone()), dir, pdf)
     }
 
-    fn events(out: &[u8]) -> Vec<Value> {
-        String::from_utf8_lossy(out)
-            .lines()
-            .map(|l| serde_json::from_str(l).unwrap())
-            .collect()
+    fn render(id: u64, page: u32, scale: f32, rotate: u32, clip: Option<[f32; 4]>) -> Command {
+        Command::Render { id, page, scale, rotate, clip }
     }
 
     #[test]
     fn parses_every_command() {
         assert_eq!(
-            parse_command(r#"{"cmd":"viewport","width":800,"height":600,"dpr":2}"#).unwrap(),
-            Command::Viewport { width: 800, height: 600, dpr: 2.0 }
+            parse_command(r#"{"cmd":"render","id":7,"page":2,"scale":1.5,"rotate":90,"clip":[1,2,3,4]}"#).unwrap(),
+            render(7, 2, 1.5, 90, Some([1.0, 2.0, 3.0, 4.0]))
         );
-        assert_eq!(parse_command(r#"{"cmd":"goto","page":3}"#).unwrap(), Command::Goto(3));
-        assert_eq!(parse_command(r#"{"cmd":"next"}"#).unwrap(), Command::Next);
-        assert_eq!(parse_command(r#"{"cmd":"prev"}"#).unwrap(), Command::Prev);
-        assert_eq!(parse_command(r#"{"cmd":"zoom","factor":1.5}"#).unwrap(), Command::Zoom(1.5));
-        assert_eq!(
-            parse_command(r#"{"cmd":"fit","mode":"page"}"#).unwrap(),
-            Command::Fit(ZoomMode::FitPage)
-        );
+        assert_eq!(parse_command(r#"{"cmd":"render","page":0,"scale":2}"#).unwrap(), render(0, 0, 2.0, 0, None));
+        assert_eq!(parse_command(r#"{"cmd":"text","page":3}"#).unwrap(), Command::Text(3));
         assert_eq!(parse_command(r#"{"cmd":"search","query":"fox"}"#).unwrap(), Command::Search("fox".into()));
-        assert_eq!(
-            parse_command(r#"{"cmd":"search_next","query":"fox","backwards":true}"#).unwrap(),
-            Command::SearchNext { query: "fox".into(), backwards: true }
-        );
+        assert_eq!(parse_command(r#"{"cmd":"outline"}"#).unwrap(), Command::Outline);
+        assert_eq!(parse_command(r#"{"cmd":"links","page":1}"#).unwrap(), Command::Links(1));
+        assert_eq!(parse_command(r#"{"cmd":"margins"}"#).unwrap(), Command::Margins);
         assert_eq!(parse_command(r#"{"cmd":"trim"}"#).unwrap(), Command::Trim);
-        assert_eq!(parse_command(r#"{"cmd":"resume"}"#).unwrap(), Command::Resume);
         assert_eq!(parse_command(r#"{"cmd":"quit"}"#).unwrap(), Command::Quit);
+        match parse_command(r#"{"cmd":"export","path":"/tmp/o.pdf","annotations":[{"page":0,"kind":"highlight","rects":[[1,2,3,4]],"color":[1,0,0],"contents":"c"}]}"#).unwrap() {
+            Command::Export { path, annotations } => {
+                assert_eq!(path, PathBuf::from("/tmp/o.pdf"));
+                assert_eq!(annotations[0].kind, ExportKind::Highlight);
+                assert_eq!(annotations[0].rects, vec![[1.0, 2.0, 3.0, 4.0]]);
+            }
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]
     fn rejects_malformed_commands_with_a_message() {
         for bad in [
-            "not json",
-            r#"{"nocmd":1}"#,
-            r#"{"cmd":"bogus"}"#,
-            r#"{"cmd":"goto"}"#,
-            r#"{"cmd":"zoom","factor":-1}"#,
-            r#"{"cmd":"fit","mode":"sideways"}"#,
+            "not json", r#"{"nocmd":1}"#, r#"{"cmd":"bogus"}"#, r#"{"cmd":"text"}"#,
+            r#"{"cmd":"render","page":0}"#, r#"{"cmd":"render","page":0,"scale":-1}"#,
+            r#"{"cmd":"render","page":0,"scale":1,"rotate":45}"#, r#"{"cmd":"render","page":0,"scale":1,"clip":[1,2]}"#,
+            r#"{"cmd":"export","path":"x","annotations":[{"page":0,"kind":"sparkle","rects":[]}]}"#,
         ] {
             assert!(parse_command(bad).is_err(), "should reject {bad}");
         }
     }
 
     #[test]
-    fn viewport_is_clamped_to_at_least_one_pixel() {
-        assert_eq!(
-            parse_command(r#"{"cmd":"viewport","width":0,"height":0}"#).unwrap(),
-            Command::Viewport { width: 1, height: 1, dpr: 1.0 }
-        );
+    fn scale_is_clamped_to_a_sane_range() {
+        match parse_command(r#"{"cmd":"render","page":0,"scale":1000}"#).unwrap() {
+            Command::Render { scale, .. } => assert_eq!(scale, 16.0),
+            _ => unreachable!(),
+        }
     }
 
     #[test]
-    fn frame_is_a_full_opaque_rgba_page_matching_the_event() {
-        let dir = temp_dir("frame");
-        fs::create_dir_all(&dir).unwrap();
-        let mut s = server(&dir);
-        s.apply(Command::Viewport { width: 600, height: 800, dpr: 1.0 });
-        let mut out = Vec::new();
-        s.emit_frame(&mut out).unwrap();
-        let ev = &events(&out)[0];
-        assert_eq!(ev["event"], "frame");
+    fn ready_carries_every_pages_size_and_matrix() {
+        let (s, dir, pdf) = server("ready");
+        let v = s.ready_event();
+        assert_eq!(v["pageCount"], 2);
+        assert_eq!(v["pages"][0]["w"], 612.0);
+        assert_eq!(v["pages"][1]["w"], 500.0, "page 2: cropped 400x500 then rotated 90");
+        assert_eq!(v["pages"][0]["m"].as_array().unwrap().len(), 6);
+        fs::remove_dir_all(&dir).ok();
+        crate::testpdf::cleanup(&pdf);
+    }
+
+    #[test]
+    fn a_frame_is_an_opaque_rgba_file_of_the_reported_size() {
+        let (mut s, dir, pdf) = server("frame");
+        let (events, quit) = s.handle(render(5, 0, 1.0, 0, None));
+        assert!(!quit);
+        let ev = &events[0];
+        assert_eq!((ev["event"].as_str(), ev["id"].as_u64(), ev["page"].as_u64()), (Some("frame"), Some(5), Some(0)));
         let (w, h) = (ev["width"].as_u64().unwrap(), ev["height"].as_u64().unwrap());
-        assert_eq!(w, 600, "fit-width => frame as wide as the viewport");
+        assert_eq!((w, h), (612, 792));
         let bytes = fs::read(ev["path"].as_str().unwrap()).unwrap();
         assert_eq!(bytes.len() as u64, w * h * 4);
-        assert!(bytes.chunks_exact(4).all(|p| p[3] == 255), "all pixels opaque");
-        // top-left corner of a page margin must be white, not black (regression: STATUS.md)
-        assert_eq!(&bytes[0..4], &[255, 255, 255, 255]);
-        assert_eq!(ev["page"], 1);
-        assert_eq!(ev["zoomMode"], "width");
-        fs::remove_dir_all(&dir).unwrap();
+        assert!(bytes.chunks_exact(4).all(|p| p[3] == 255), "opaque");
+        assert_eq!(&bytes[0..4], &[255, 255, 255, 255], "paper margin is white, not black");
+        fs::remove_dir_all(&dir).ok();
+        crate::testpdf::cleanup(&pdf);
     }
 
     #[test]
-    fn navigation_clamps_and_reports_one_indexed_pages() {
-        let dir = temp_dir("nav");
-        fs::create_dir_all(&dir).unwrap();
-        let mut s = server(&dir);
-        s.apply(Command::Goto(2));
-        assert_eq!(s.session().state.page, 1);
-        s.apply(Command::Goto(9999));
-        assert_eq!(s.session().state.page, s.session().state.page_count - 1);
-        s.apply(Command::Prev);
-        s.apply(Command::Goto(0)); // 0 saturates to first page, never underflows
-        assert_eq!(s.session().state.page, 0);
-        fs::remove_dir_all(&dir).unwrap();
+    fn rotate_and_clip_change_the_frame_size_as_the_overlay_math_assumes() {
+        let (mut s, dir, pdf) = server("rotclip");
+        let size = |s: &mut Server<MuPdfDocumentEngine>, rot, clip| {
+            let (e, _) = s.handle(render(1, 0, 2.0, rot, clip));
+            (e[0]["width"].as_u64().unwrap(), e[0]["height"].as_u64().unwrap())
+        };
+        assert_eq!(size(&mut s, 0, None), (1224, 1584));
+        assert_eq!(size(&mut s, 90, None), (1584, 1224));
+        assert_eq!(size(&mut s, 0, Some([10.0, 20.0, 100.0, 50.0])), (200, 100));
+        assert_eq!(size(&mut s, 180, Some([10.0, 20.0, 100.0, 50.0])), (200, 100));
+        assert_eq!(size(&mut s, 270, Some([10.0, 20.0, 100.0, 50.0])), (100, 200));
+        fs::remove_dir_all(&dir).ok();
+        crate::testpdf::cleanup(&pdf);
     }
 
     #[test]
-    fn zoom_switches_to_fixed_and_fit_restores() {
-        let dir = temp_dir("zoom");
-        fs::create_dir_all(&dir).unwrap();
-        let mut s = server(&dir);
-        s.apply(Command::Zoom(ZOOM_STEP));
-        assert_eq!(s.session().state.zoom_mode, ZoomMode::Fixed);
-        s.apply(Command::Fit(ZoomMode::FitWidth));
-        assert_eq!(s.session().state.zoom_mode, ZoomMode::FitWidth);
-        fs::remove_dir_all(&dir).unwrap();
+    fn an_absurd_scale_is_capped_so_one_frame_cannot_eat_the_machine() {
+        let (mut s, dir, pdf) = server("cap");
+        let (e, _) = s.handle(render(1, 0, 16.0, 0, None)); // 612x792 at 16x would be 124M px
+        let (w, h) = (e[0]["width"].as_u64().unwrap(), e[0]["height"].as_u64().unwrap());
+        assert!(w * h <= 40_100_000, "{w}x{h}");
+        assert!(w * h > 30_000_000, "it is reduced to the cap, not to something tiny: {w}x{h}");
+        assert!(e[0]["scale"].as_f64().unwrap() < 16.0, "the reported scale is the one actually used");
+        fs::remove_dir_all(&dir).ok();
+        crate::testpdf::cleanup(&pdf);
     }
 
     #[test]
-    fn search_reports_highlights_in_frame_pixels() {
-        let dir = temp_dir("search");
-        fs::create_dir_all(&dir).unwrap();
-        let mut s = server(&dir);
-        s.apply(Command::Viewport { width: 600, height: 800, dpr: 1.0 });
-        s.apply(Command::Search("brown fox".into()));
-        let mut out = Vec::new();
-        s.emit_frame(&mut out).unwrap();
-        let ev = &events(&out)[0];
-        let hl = ev["highlights"].as_array().unwrap();
-        assert!(!hl.is_empty(), "frame for the hit page must carry highlights");
-        let r = hl[0].as_array().unwrap();
-        let (x, y, w, h) = (r[0].as_f64().unwrap(), r[1].as_f64().unwrap(), r[2].as_f64().unwrap(), r[3].as_f64().unwrap());
-        assert!(x >= 0.0 && y >= 0.0 && w > 0.0 && h > 0.0);
-        assert!(x + w <= ev["width"].as_f64().unwrap() && y + h <= ev["height"].as_f64().unwrap());
-        assert!(ev["search"]["total"].as_u64().unwrap() >= 1);
-        fs::remove_dir_all(&dir).unwrap();
+    fn a_bad_page_is_reported_and_the_id_is_released_not_a_crash() {
+        let (mut s, dir, pdf) = server("badpage");
+        let (events, _) = s.handle(render(9, 99, 1.0, 0, None));
+        assert_eq!(events[0]["event"], "error");
+        assert_eq!(events[1], json!({"event": "skipped", "id": 9}), "the host must be able to forget the request");
+        fs::remove_dir_all(&dir).ok();
+        crate::testpdf::cleanup(&pdf);
     }
 
     #[test]
-    fn trim_frees_memory_and_suppresses_frames_until_resume() {
-        let dir = temp_dir("trim");
-        fs::create_dir_all(&dir).unwrap();
-        let mut s = server(&dir);
-        let mut out = Vec::new();
-        s.emit_frame(&mut out).unwrap();
-        assert!(s.session().cache_len() > 0);
-        assert_eq!(s.apply(Command::Trim), Flow::Quiet);
-        assert_eq!(s.session().cache_len(), 0, "trim must drop cached renders");
-        assert_eq!(s.apply(Command::Next), Flow::Quiet, "no rendering while backgrounded");
-        assert_eq!(s.apply(Command::Resume), Flow::Render);
-        fs::remove_dir_all(&dir).unwrap();
+    fn coalescing_keeps_only_the_last_render_per_page_and_reports_the_rest() {
+        let batch = vec![
+            render(1, 0, 1.0, 0, None), render(2, 1, 1.0, 0, None), render(3, 0, 2.0, 0, None),
+            Command::Text(0), render(4, 0, 3.0, 0, None),
+        ];
+        let (kept, skipped) = Server::<MuPdfDocumentEngine>::coalesce(batch);
+        assert_eq!(skipped, vec![1, 3]);
+        assert_eq!(kept.len(), 3);
+        assert!(matches!(kept[0], Command::Render { id: 2, .. }));
+        assert!(matches!(kept[2], Command::Render { id: 4, .. }));
     }
 
     #[test]
-    fn a_new_frame_removes_the_previous_unconsumed_one() {
-        let dir = temp_dir("gc");
-        fs::create_dir_all(&dir).unwrap();
-        let mut s = server(&dir);
-        let mut out = Vec::new();
-        s.emit_frame(&mut out).unwrap();
-        s.apply(Command::Next);
-        s.emit_frame(&mut out).unwrap();
+    fn old_frames_are_deleted_so_a_slow_host_cannot_fill_the_disk() {
+        let (mut s, dir, pdf) = server("gc");
+        for i in 0..(KEEP_FRAMES as u64 + 5) {
+            s.handle(render(i, 0, 0.2, 0, None));
+        }
         let n = fs::read_dir(&dir).unwrap().count();
-        assert_eq!(n, 1, "only the latest frame file may remain on disk");
+        assert_eq!(n, KEEP_FRAMES);
         s.cleanup();
         assert_eq!(fs::read_dir(&dir).unwrap().count(), 0);
-        fs::remove_dir_all(&dir).unwrap();
+        fs::remove_dir_all(&dir).ok();
+        crate::testpdf::cleanup(&pdf);
     }
 
     #[test]
-    fn run_coalesces_a_burst_into_one_frame_and_quits_cleanly() {
-        let dir = temp_dir("run");
-        let s = server(&dir);
-        let input = "{\"cmd\":\"viewport\",\"width\":500,\"height\":700}\n{\"cmd\":\"next\"}\n{\"cmd\":\"next\"}\n{\"cmd\":\"bogus\"}\n{\"cmd\":\"quit\"}\n";
+    fn text_search_outline_links_events_have_the_documented_shape() {
+        let (mut s, dir, pdf) = server("events");
+        let (e, _) = s.handle(Command::Text(0));
+        assert_eq!(e[0]["event"], "text");
+        let line = e[0]["lines"].as_array().unwrap().iter().find(|l| l["t"].as_str().unwrap().contains("Hello world")).unwrap();
+        assert_eq!(line["x"].as_array().unwrap().len(), line["t"].as_str().unwrap().chars().count() + 1);
+        assert_eq!(line["b"].as_array().unwrap().len(), 4);
+
+        let (e, _) = s.handle(Command::Search("quick brown".into()));
+        assert_eq!(e[0]["event"], "search");
+        let hit = &e[0]["hits"][0];
+        assert_eq!(hit["page"], 0);
+        let r = hit["rects"][0].as_array().unwrap();
+        assert!(r[2].as_f64().unwrap() > 20.0 && r[3].as_f64().unwrap() > 5.0, "a rect, not a quad: {r:?}");
+
+        let (e, _) = s.handle(Command::Outline);
+        assert_eq!(e[0]["items"][0]["t"], "Chapter 1");
+        assert_eq!(e[0]["items"][1]["c"][0]["t"], "Section 2.1");
+
+        let (e, _) = s.handle(Command::Links(0));
+        let links = e[0]["links"].as_array().unwrap();
+        assert!(links.iter().any(|l| l["p"] == 1) && links.iter().any(|l| l["u"] == "https://example.org/x"));
+        fs::remove_dir_all(&dir).ok();
+        crate::testpdf::cleanup(&pdf);
+    }
+
+    #[test]
+    fn export_writes_a_pdf_with_the_requested_annotations() {
+        let (mut s, dir, pdf) = server("export");
+        let out = dir.join("annotated.pdf");
+        let (e, _) = s.handle(Command::Export {
+            path: out.clone(),
+            annotations: vec![ExportAnnotation { page: 0, kind: ExportKind::Underline, rects: vec![[72.0, 80.0, 60.0, 14.0]], color: [1.0, 0.0, 0.0], contents: String::new() }],
+        });
+        assert_eq!(e[0]["event"], "exported");
+        assert_eq!(e[0]["count"], 1);
+        assert!(MuPdfDocumentEngine::open(&out).is_ok(), "the exported file must open");
+        fs::remove_dir_all(&dir).ok();
+        crate::testpdf::cleanup(&pdf);
+    }
+
+    #[test]
+    fn margins_use_the_smallest_ink_margin_and_ignore_blank_pages() {
+        let boxes = vec![
+            (Some([60.0, 70.0, 540.0, 720.0]), (612.0, 792.0)),
+            (None, (612.0, 792.0)),
+            (Some([80.0, 50.0, 500.0, 760.0]), (612.0, 792.0)),
+        ];
+        let m = margins_from_boxes(&boxes).unwrap();
+        assert_eq!(m, [54.0, 44.0, 66.0, 26.0], "min margins 60/50/72/32 minus 6pt padding");
+        assert_eq!(margins_from_boxes(&[(None, (612.0, 792.0))]), None, "all blank -> no crop");
+        assert_eq!(margins_from_boxes(&[(Some([3.0, 3.0, 609.0, 789.0]), (612.0, 792.0))]), None, "scans with no margin: nothing to crop");
+    }
+
+    #[test]
+    fn margins_command_finds_the_margins_of_a_real_page() {
+        let (mut s, dir, pdf) = server("margins");
+        let (e, _) = s.handle(Command::Margins);
+        let ins = e[0]["insets"].as_array().expect("text pages have margins to crop");
+        assert!(ins[0].as_f64().unwrap() > 40.0, "left margin ~72pt: {ins:?}");
+        fs::remove_dir_all(&dir).ok();
+        crate::testpdf::cleanup(&pdf);
+    }
+
+    #[test]
+    fn run_serves_a_session_over_the_protocol_and_cleans_up_on_quit() {
+        let (s, dir, pdf) = server("run");
+        let input = "{\"cmd\":\"render\",\"id\":1,\"page\":0,\"scale\":0.5}\n{\"cmd\":\"bogus\"}\n{\"cmd\":\"quit\"}\n";
         let mut out = Vec::new();
         run(s, Cursor::new(input.to_string()), &mut out).unwrap();
-        let evs = events(&out);
+        let evs: Vec<Value> = String::from_utf8_lossy(&out).lines().map(|l| serde_json::from_str(l).unwrap()).collect();
         assert_eq!(evs[0]["event"], "ready");
-        let frames: Vec<_> = evs.iter().filter(|e| e["event"] == "frame").collect();
-        // quit arrives in the same drained batch, so it ends the loop before rendering;
-        // the bogus command is reported, not fatal.
-        assert!(frames.len() <= 1);
-        assert!(evs.iter().any(|e| e["event"] == "error"));
-        let _ = fs::remove_dir_all(&dir);
+        assert!(evs.iter().any(|e| e["event"] == "error"), "the bad command is reported, not fatal");
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 0, "frame files are removed on exit");
+        fs::remove_dir_all(&dir).ok();
+        crate::testpdf::cleanup(&pdf);
     }
 
     #[test]
-    fn eof_on_stdin_ends_the_loop() {
-        let dir = temp_dir("eof");
-        let s = server(&dir);
+    fn eof_on_stdin_ends_the_loop_after_serving_what_was_queued() {
+        let (s, dir, pdf) = server("eof");
         let mut out = Vec::new();
-        run(s, Cursor::new("{\"cmd\":\"viewport\",\"width\":400,\"height\":400}\n".to_string()), &mut out).unwrap();
-        let evs = events(&out);
-        assert!(evs.iter().any(|e| e["event"] == "frame"), "command before EOF is still served");
-        let _ = fs::remove_dir_all(&dir);
+        run(s, Cursor::new("{\"cmd\":\"render\",\"id\":1,\"page\":0,\"scale\":0.5}\n".to_string()), &mut out).unwrap();
+        assert!(String::from_utf8_lossy(&out).contains("\"event\":\"frame\""));
+        fs::remove_dir_all(&dir).ok();
+        crate::testpdf::cleanup(&pdf);
     }
 }

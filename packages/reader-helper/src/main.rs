@@ -126,11 +126,8 @@ fn main() -> ExitCode {
     };
     log::debug(&format!("pages={}", engine.page_count()));
 
-    let mut state = ReaderState::new(args.file.clone(), engine.page_count());
-    state.goto_page(args.page);
-
     if let Some(frame_dir) = args.serve_frame_dir {
-        let server = Server::new(engine, state, frame_dir);
+        let server = Server::new(engine, frame_dir);
         let stdin = std::io::stdin();
         let mut stdout = std::io::stdout().lock();
         return match serve::run(server, std::io::BufReader::new(stdin), &mut stdout) {
@@ -141,6 +138,9 @@ fn main() -> ExitCode {
             }
         };
     }
+
+    let mut state = ReaderState::new(args.file.clone(), engine.page_count());
+    state.goto_page(args.page);
 
     let event_loop = match EventLoop::new() {
         Ok(el) => el,

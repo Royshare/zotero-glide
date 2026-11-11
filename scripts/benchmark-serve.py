@@ -48,16 +48,24 @@ for name in FIXTURES:
     p = subprocess.Popen([BIN, "--serve", "--frame-dir", frames, "--file", pdf],
                          stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, env=ENV)
     send = lambda **c: (p.stdin.write(json.dumps(c) + "\n"), p.stdin.flush())
-    ev = lambda: json.loads(p.stdout.readline())
-    ready = ev()
+    def frame(page, rid):
+        """Render one page and wait for its frame; the host reads and deletes the file, so do we."""
+        send(cmd="render", id=rid, page=page, scale=SCALE)
+        while True:
+            ev = json.loads(p.stdout.readline())
+            if ev.get("event") == "frame" and ev["id"] == rid:
+                os.remove(ev["path"])
+                return ev
+    ready = json.loads(p.stdout.readline())
     pages = ready["pageCount"]
-    t0 = time.time(); send(cmd="viewport", width=VIEWPORT[0], height=VIEWPORT[1], dpr=VIEWPORT[2]); ev()
+    SCALE = VIEWPORT[0] / ready["pages"][0]["w"]  # fit width, retina
+    t0 = time.time(); frame(0, 1)
     first_ms = (time.time() - t0) * 1000
     after_first = footprint_mb(p.pid)
     lat, mid = [], None
     turns = min(100, pages - 1)
     for i in range(turns):
-        t = time.time(); send(cmd="next"); ev(); lat.append((time.time() - t) * 1000)
+        t = time.time(); frame(i + 1, i + 2); lat.append((time.time() - t) * 1000)
         if i == turns // 2: mid = footprint_mb(p.pid)
     end = footprint_mb(p.pid)
     send(cmd="trim"); time.sleep(0.4); trimmed = footprint_mb(p.pid)
