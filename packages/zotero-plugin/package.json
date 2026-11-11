@@ -6,7 +6,7 @@
   "type": "module",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/local-dev/zotero-glide.git"
+    "url": "git+https://github.com/Royshare/zotero-glide.git"
   },
   "config": {
     "addonName": "Zotero Fast Reader",

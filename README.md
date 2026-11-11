@@ -251,8 +251,9 @@ for image-heavy documents, and that's documented rather than hidden.
 - Windows (never built or run) and x86_64 Linux (not run); the CI workflows exist but have not
   run on GitHub (`docs/cross-platform.md`).
 - Code signing / notarization (`docs/cross-platform.md`).
-- Closing the licensing gaps listed in [`docs/licensing.md`](docs/licensing.md) (libjpeg's
-  license text, a real repository URL for the source offer) before a public release.
+- Before a public release: make the repository public (or ship the source archive with every
+  binary), since the AGPL source offer must be obtainable by recipients --
+  [`docs/licensing.md`](docs/licensing.md).
 
 ## License
 
@@ -262,6 +263,8 @@ AGPL-3.0-or-later, so the whole project is too. Third-party components:
 the obligations are met: [`docs/licensing.md`](docs/licensing.md). The `.xpi`
 carries `legal/LICENSE`, `legal/THIRD_PARTY_NOTICES.md` and `legal/SOURCE.md`;
 `fast-reader-helper --license` prints the notice from the binary.
+
+This software is based in part on the work of the Independent JPEG Group (libjpeg, inside MuPDF).
 
 ## Known platform limitations
 

@@ -104,16 +104,24 @@ MuPDF (or buying Artifex's commercial license -- next section).
 | Corresponding source offered with every binary (AGPL section 6) | The release workflow builds the `.xpi` with `FAST_READER_SOURCE_URL` / `FAST_READER_SOURCE_COMMIT` baked in and attaches `zotero-fast-reader-<version>-source.tar.gz`: this project **plus the vendored source of every dependency, MuPDF included** (`cargo vendor`) |
 | Modified-version network clause (AGPL section 13) | Not triggered: no network service exists. Revisit if one is added |
 
-**Known gaps to close before a public release** (also printed in
-`THIRD_PARTY_NOTICES.md`):
-- libjpeg (inside MuPDF): the vendored copy has no README carrying the IJG
-  license conditions; add that text from ijg.org.
-- The repository has no public URL yet. `package.json`'s `repository` is a
-  placeholder, and the source offer is filled in only by the release workflow
-  (it uses the GitHub repository it runs in). Until a real repository exists,
-  there is nowhere valid to point the offer.
-- Several crates publish no license file; their declared license (listed in the
-  notices) applies, but a counsel review may want the texts attached.
+**Closed since the first draft of this document:**
+- libjpeg (inside MuPDF, IJG 9f): the vendored copy omits the README that carries the IJG license, but that license
+  requires the README to accompany distributed source and requires executables to say that "this software is based in
+  part on the work of the Independent JPEG Group". A verbatim copy of the 9f README (from the IJG release at
+  https://www.ijg.org/files/jpegsrc.v9f.tar.gz) is committed as `licenses/libjpeg-ijg-9f-README.txt`, reproduced in
+  `THIRD_PARTY_NOTICES.md`, shipped in the source archive, and the acknowledgement appears in the notices, in
+  `fast-reader-helper --license`, and in the README.
+- Repository: https://github.com/Royshare/zotero-glide (private). `package.json` and the manifest point at it, and
+  the release workflow bakes `github.com/<owner>/<repo>` and the commit into every binary and `legal/SOURCE.md`.
+
+**Still open before a public release:**
+- **The repository is private.** The AGPL source offer must be something recipients can actually obtain. Either make
+  the repository public before distributing binaries, or distribute the source archive (`scripts/make-source-archive.sh`,
+  attached to each release) to the same people as the binaries -- release assets of a private repository are private
+  too, so a link to it is not an offer to anyone who cannot sign in. The manifest's `update_url` has the same
+  limitation: Zotero cannot fetch an update manifest from a private repository.
+- Several crates publish no license file; their declared license (listed in the notices) applies, but a counsel
+  review may want the texts attached.
 - Icons are inlined Lucide SVG paths (ISC, attribution in the notices).
 
 ## What changes if a commercial MuPDF license were used instead
