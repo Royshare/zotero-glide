@@ -1,5 +1,7 @@
 # Zotero Fast Reader (v0.1)
 
+<img src="packages/zotero-plugin/addon/content/icons/zotero-glide.svg" alt="Zotero Glide icon: an open book with a red-tinted right page" width="96" height="96">
+
 A lightweight MuPDF-based reading companion for Zotero.
 
 ## What this is

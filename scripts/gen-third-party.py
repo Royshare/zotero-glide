@@ -37,6 +37,7 @@ MUPDF_THIRDPARTY = [
 # README to accompany any distribution of the source. A verbatim copy of the README from the IJG 9f release
 # (https://www.ijg.org/files/jpegsrc.v9f.tar.gz) is kept in licenses/ and shipped with the source archive.
 IJG_README = f"{ROOT}/licenses/libjpeg-ijg-9f-README.txt"
+PHOSPHOR_LICENSE = f"{ROOT}/licenses/phosphor-icons-MIT.txt"
 # Things a release must still resolve; printed in the generated file so they cannot be forgotten.
 KNOWN_GAPS: list[str] = []
 
@@ -108,9 +109,12 @@ def main():
               "into MuPDF (`base14-fonts` feature) and distributed with MuPDF under the AGPL (with the fonts'",
               "own font exception). No other fonts are bundled.", "",
               "## Icons", "", "The reader UI's icons are inlined SVG paths from **Lucide** (https://lucide.dev),",
-              "(c) Lucide Contributors, ISC License; portions derived from Feather (c) Cole Bemis, MIT License.", ""]
+              "(c) Lucide Contributors, ISC License; portions derived from Feather (c) Cole Bemis, MIT License.", "",
+              "The plugin icon is a recolored adaptation of **Phosphor Icons**' `book-open-text-duotone`",
+              "(https://phosphoricons.com), Copyright (c) 2023 Phosphor Icons, MIT License.", ""]
     add_text("Lucide icons", "Lucide -- ISC License", LUCIDE_LICENSE)
     add_text("Feather (via Lucide)", "Feather -- MIT License", FEATHER_LICENSE)
+    add_text("Phosphor Icons (plugin icon)", "Phosphor Icons -- MIT License", read(PHOSPHOR_LICENSE))
 
     lines += ["## Rust crates", "",
               f"Union of the build graphs of: {', '.join(TARGETS)}.", "",
