@@ -34,6 +34,9 @@ export interface SidebarAnnotation {
   key: string;
   kind: "highlight" | "underline" | "note" | "image" | "text" | "ink";
   color: string;
+  /** stored in the PDF file rather than in Zotero: shown read-only and marked */
+  external?: boolean;
+  author?: string;
   text: string;
   /** object URL of the cropped picture (image annotations) */
   image?: string;
@@ -176,6 +179,8 @@ const CSS = `
 .fr-ann{margin:6px;padding:6px 8px;border-radius:6px;border:1px solid var(--fr-border);border-inline-start:4px solid var(--c);cursor:default}
 .fr-ann:hover{background:var(--fr-hover)}
 .fr-ann .fr-ann-meta{display:flex;justify-content:space-between;font-size:11px;opacity:.65;margin-bottom:3px}
+.fr-ann[data-external=true]{border-style:dashed;border-inline-start-style:solid;background:repeating-linear-gradient(135deg,transparent 0 7px,color-mix(in srgb,CanvasText 4%,transparent) 7px 14px)}
+.fr-ann .fr-ann-badge{display:inline-flex;align-items:center;gap:3px;margin-inline-start:6px;padding:0 5px;border:1px solid var(--fr-border);border-radius:9px;font-size:10px;opacity:.85}
 .fr-ann .fr-ann-text{margin:2px 0}
 .fr-ann .fr-ann-comment{margin-top:4px;font-style:italic}
 .fr-empty{padding:16px;opacity:.6;text-align:center}
@@ -918,6 +923,14 @@ export class ReaderView {
       const meta = this.doc.createElementNS(XHTML, "div") as HTMLElement;
       meta.className = "fr-ann-meta";
       meta.textContent = `${a.kind[0]!.toUpperCase()}${a.kind.slice(1)} · page ${a.pageLabel || a.page + 1}`;
+      if (a.external) {
+        card.dataset.external = "true";
+        const badge = this.doc.createElementNS(XHTML, "span") as HTMLElement;
+        badge.className = "fr-ann-badge";
+        badge.title = "Stored inside the PDF file, not in Zotero: read-only";
+        badge.append(createIcon(this.doc, "file-text", 10), this.doc.createTextNode("In PDF"));
+        meta.append(badge);
+      }
       card.append(meta);
       if (a.image) {
         const img = this.doc.createElementNS(XHTML, "img") as HTMLImageElement;

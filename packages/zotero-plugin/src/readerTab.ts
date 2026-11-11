@@ -14,7 +14,7 @@
  */
 
 import {
-  buildMarkup, buildNote, hexToRgb, pdfRectsToPage, type AnnotationDraft, type AnnotationKind, type PdfRect, ANNOTATION_COLORS,
+  applyMatrix, buildImage, buildMarkup, buildNote, rgbToHex, hexToRgb, pdfRectsToPage, type AnnotationDraft, type AnnotationKind, type PdfRect, ANNOTATION_COLORS,
 } from "./annotations.ts";
 import { HelperConnection, type HelperProcess } from "./helperConnection.ts";
 import {
@@ -91,6 +91,9 @@ export interface AnnotationRecord {
   pageLabel: string;
   sortIndex: string;
   rects: PdfRect[];
+  /** stored inside the PDF file, not in Zotero: read-only (no comment, color or delete) */
+  external?: boolean;
+  author?: string;
 }
 
 /** Zotero-side annotation operations (implemented in fastReader.ts over Zotero.Annotations). */
@@ -394,6 +397,16 @@ export class ReaderTab {
       case "outline":
         this.outline = ev.items;
         if (this.view.sidebarTabNow === "outline") this.view.renderOutline(ev.items);
+        return;
+      case "annots":
+        this.onEmbedded(ev);
+        return;
+      case "images":
+        this.images.set(ev.page, ev.rects);
+        this.imagesPending.delete(ev.page);
+        this.buildFiguresIfReady();
+        // a dark page drawn before its images were known has to be drawn again
+        if (ev.rects.length && this.imagesAtDraw.get(ev.page) === false && this.rendered.delete(ev.page)) this.requestVisible();
         return;
       case "links":
         this.links.set(ev.page, ev.links);
@@ -937,7 +950,7 @@ export class ReaderTab {
   private overlaysFor(page: number): OverlayItem[] {
     const items: OverlayItem[] = [];
     for (const a of this.annotations) {
-      if (a.pageIndex !== page) continue;
+      if (a.pageIndex !== page || a.external || a.kind === "text" || a.kind === "ink") continue; // embedded ones are already painted into the page bitmap
       const rects = this.annotationRects.get(a.key) ?? [];
       if (a.kind === "note") {
         if (rects[0]) items.push({ kind: "note", rect: this.pxRect(page, rects[0]), color: a.color, key: a.key });
@@ -988,7 +1001,7 @@ export class ReaderTab {
   private annotationAt(page: number, x: number, y: number): AnnotationRecord | null {
     for (let i = this.annotations.length - 1; i >= 0; i--) {
       const a = this.annotations[i]!;
-      if (a.pageIndex !== page) continue;
+      if (a.pageIndex !== page || a.external) continue;
       const rects = this.annotationRects.get(a.key) ?? [];
       if (rects.some((r) => x >= r[0] - 2 && x <= r[0] + r[2] + 2 && y >= r[1] - 2 && y <= r[1] + r[3] + 2)) return a;
     }
@@ -1190,18 +1203,56 @@ export class ReaderTab {
   // ======================================================================= annotations
   private refreshAnnotations(): void {
     if (this.disposed) return;
-    this.annotations = [...this.d.annotations.list()].sort((a, b) => a.sortIndex.localeCompare(b.sortIndex));
+    const own = [...this.d.annotations.list()];
     this.annotationRects.clear();
-    for (const a of this.annotations) {
+    for (const a of own) {
       const info = this.pages[a.pageIndex];
       if (info) this.annotationRects.set(a.key, pdfRectsToPage(a.rects, info.m));
     }
+    const external = [...this.embedded.values()].flat();
+    this.annotations = [...own, ...external].sort((a, b) => a.sortIndex.localeCompare(b.sortIndex));
     if (this.view.sidebarOpen && this.view.sidebarTabNow === "annotations") this.renderAnnotationList();
     this.refreshAllOverlays();
   }
 
+  /** Asks the helper for the annotations stored in the PDF file (once; they only show in the sidebar list). */
+  private ensureEmbedded(): void {
+    if (this.embeddedAsked || !this.pages.length) return;
+    this.embeddedAsked = true;
+    for (let p = 0; p < this.pages.length; p++) void this.conn.send({ cmd: "annots", page: p });
+  }
+
+  private onEmbedded(ev: Extract<HelperEvent, { event: "annots" }>): void {
+    const list: AnnotationRecord[] = ev.items.map((it, i) => {
+      const top = Math.max(0, Math.min(...it.r.map((r) => r[1])));
+      const key = `pdf-${ev.page}-${i}`;
+      this.annotationRects.set(key, it.r);
+      return {
+        key,
+        kind: (["highlight", "underline", "note", "text", "ink"].includes(it.k) ? it.k : "highlight") as AnnotationKind,
+        color: it.c ? rgbToHex(it.c) : "#aaaaaa",
+        text: it.x,
+        comment: it.t,
+        pageIndex: ev.page,
+        pageLabel: String(ev.page + 1),
+        sortIndex: `${String(ev.page).padStart(5, "0")}|000000|${String(Math.floor(top)).padStart(5, "0")}`,
+        rects: [],
+        external: true,
+        author: it.a,
+      };
+    });
+    if (list.length) this.embedded.set(ev.page, list);
+    if (!list.length || this.embeddedTimer !== null) return;
+    this.embeddedTimer = this.d.setTimeout(() => {
+      this.embeddedTimer = null;
+      this.refreshAnnotations();
+    }, 120);
+  }
+
   private renderAnnotationList(): void {
-    this.view.renderAnnotations(this.annotations.map((a) => ({ key: a.key, kind: a.kind, color: a.color, text: a.text, comment: a.comment, pageLabel: a.pageLabel, page: a.pageIndex })));
+    this.ensureEmbedded();
+    this.view.renderAnnotations(this.annotations.map((a) => ({ key: a.key, kind: a.kind, color: a.color, text: a.text, external: a.external, author: a.author, image: this.imageUrls.get(a.key), comment: a.comment, pageLabel: a.pageLabel, page: a.pageIndex })));
+    this.loadAnnotationImages();
   }
 
   private async createMarkupFromSelection(kind: "highlight" | "underline", focusComment = false): Promise<void> {
@@ -1692,6 +1743,7 @@ export class ReaderTab {
     const out = await this.d.host.chooseExportPath(`${this.d.title.replace(/[\\/:*?"<>|]/g, "_")} (annotated).pdf`);
     if (!out) return;
     const annotations = this.annotations
+      .filter((a): a is AnnotationRecord & { kind: "highlight" | "underline" | "note" } => !a.external && (a.kind === "highlight" || a.kind === "underline" || a.kind === "note"))
       .map((a) => {
         const rects = this.annotationRects.get(a.key) ?? [];
         return { page: a.pageIndex, kind: a.kind, rects, color: hexToRgb(a.color), contents: a.kind === "note" ? a.comment : a.comment };

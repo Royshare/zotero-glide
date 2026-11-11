@@ -39,6 +39,8 @@ export type HelperCommand =
   | { cmd: "search"; query: string }
   | { cmd: "outline" }
   | { cmd: "links"; page: number }
+  | { cmd: "images"; page: number }
+  | { cmd: "annots"; page: number }
   | { cmd: "margins" }
   | { cmd: "export"; path: string; annotations: ExportAnnotation[] }
   | { cmd: "trim" }
@@ -88,11 +90,15 @@ export type HelperEvent =
   | { event: "search"; query: string; hits: Array<{ page: number; rects: Rect[] }>; truncated: boolean }
   | { event: "outline"; items: OutlineNode[] }
   | { event: "links"; page: number; links: LinkData[] }
+  /** where raster images are painted, page space; dark mode leaves them alone */
+  | { event: "images"; page: number; rects: Rect[] }
+  /** annotations stored inside the PDF file: kind, page-space rects, color (0..1 rgb), contents, author, text under it */
+  | { event: "annots"; page: number; items: Array<{ k: string; r: Rect[]; c: [number, number, number] | null; t: string; a: string; x: string }> }
   | { event: "margins"; insets: [number, number, number, number] | null }
   | { event: "exported"; path: string; count: number }
   | { event: "error"; message: string; cmd?: string };
 
-const KNOWN = new Set(["ready", "frame", "skipped", "text", "search", "outline", "links", "margins", "exported", "error"]);
+const KNOWN = new Set(["ready", "frame", "skipped", "text", "search", "outline", "links", "images", "annots", "margins", "exported", "error"]);
 
 export function encodeCommand(command: HelperCommand): string {
   return JSON.stringify(command) + "\n";

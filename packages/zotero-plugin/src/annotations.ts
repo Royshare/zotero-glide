@@ -13,7 +13,7 @@
 
 import type { Matrix, PageInfo, Rect } from "./protocol.ts";
 
-export type AnnotationKind = "highlight" | "underline" | "note";
+export type AnnotationKind = "highlight" | "underline" | "note" | "image" | "text" | "ink";
 
 /** [x1, y1, x2, y2] in PDF space, x1<x2, y1<y2 */
 export type PdfRect = [number, number, number, number];
@@ -199,6 +199,11 @@ export function overlayStyle(kind: AnnotationKind, hex: string): { background?: 
   if (kind === "underline") return { borderBottom: `2px solid ${hex}`, opacity: 1 };
   if (kind === "image") return { opacity: 1 };
   return { background: hex, opacity: 0.9 };
+}
+
+/** [r, g, b] in 0..1 -> `#rrggbb` */
+export function rgbToHex(rgb: [number, number, number]): string {
+  return "#" + rgb.map((v) => Math.round(Math.min(1, Math.max(0, v)) * 255).toString(16).padStart(2, "0")).join("");
 }
 
 /** `#rrggbb` -> [r, g, b] in 0..1 (the helper's export wants this); falls back to Zotero yellow. */
