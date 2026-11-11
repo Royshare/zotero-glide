@@ -67,3 +67,95 @@ test("numbered entries are found by their own number, whatever the link's coordi
   assert.equal(singleNumber("[15]"), 15);
   assert.equal(singleNumber("7–9"), null);
 });
+
+import { buildReferenceSet, findPageCitations, parseAuthorYearReferences } from "../src/citations.ts";
+
+const mk = (t: string, x: number, y: number): TextLineData => ({ b: [x, y, 400, 9], t, x: Array.from({ length: [...t].length + 1 }, (_, i) => x + i * 4) });
+const page = (...rows: Array<[string, number, number]>) => ({ lines: rows.map(([t, x, y]) => mk(t, x, y)) });
+const hits = (text: ReturnType<typeof page>, refs: ReturnType<typeof buildReferenceSet>) => findPageCitations(text, refs).map((m) => m.items.map((i) => i.label));
+
+const AY_REFS = (() => {
+  const refs = page(
+    ["References", 55, 60],
+    ["Brown, T. (2019). A study of flows. Journal of Fluids, 5, 1–10.", 55, 80],
+    ["Jones, M. and Smith, J. (2020). Particles in channels. Phys. Rev. Fluids, 4,", 55, 100],
+    ["   044301.", 67, 111],
+    ["Smith, J., Lee, K., and Park, S. (2021). Another study. Lab Chip, 20, 1–9.", 55, 123],
+    ["Smith, J. (2020a). Same year A. Nature, 1, 1.", 55, 145],
+    ["Smith, J. (2020b). Same year B. Nature, 2, 2.", 55, 160],
+    ["van der Berg, A. (2018). Microfluidics review. Chem. Rev., 118, 1–30.", 55, 175],
+    ["Zhang, W. (2015). Another one. Science, 350, 1.", 55, 190],
+  );
+  return buildReferenceSet([{ page: 9, text: refs }], { page: 9, line: 0 });
+})();
+
+test("author-year reference lists are parsed (hanging indents, particles, a/b suffixes)", () => {
+  assert.equal(AY_REFS.mode, "ay");
+  const names = AY_REFS.ay.map((e) => `${e.surname} ${e.year}`);
+  assert.deepEqual(names, ["brown 2019", "jones 2020", "smith 2021", "smith 2020a", "smith 2020b", "van der berg 2018", "zhang 2015"]);
+  assert.ok(AY_REFS.ay[1]!.text.includes("044301"), "the wrapped line belongs to the entry");
+});
+
+test("author-year citations: parenthetical, et al., two authors, several in one, narrative, wrapped over a line", () => {
+  assert.deepEqual(hits(page(["as shown before (Brown, 2019) and others", 50, 10]), AY_REFS), [["Brown 2019"]]);
+  assert.deepEqual(hits(page(["found in (Jones and Smith, 2020)", 50, 10]), AY_REFS), [["Jones 2020"]]);
+  assert.deepEqual(hits(page(["(Smith et al., 2021; Zhang 2015)", 50, 10]), AY_REFS), [["Smith 2021", "Zhang 2015"]]);
+  assert.deepEqual(hits(page(["Smith et al. (2020a) showed that", 50, 10]), AY_REFS), [["Smith 2020a"]]);
+  assert.deepEqual(hits(page(["see (e.g., Brown 2019, p. 4)", 50, 10]), AY_REFS), [["Brown 2019"]]);
+  assert.deepEqual(hits(page(["see van der Berg (2018) for details", 50, 10]), AY_REFS), [["van der Berg 2018"]]);
+  const wrapped = findPageCitations(page(["flows are common (Brown,", 50, 10], ["2019) in practice", 50, 22]), AY_REFS);
+  assert.equal(wrapped.length, 1);
+  assert.equal(wrapped[0]!.rects.length, 2, "one rectangle per line");
+});
+
+test("author-year: a year without the exact entry, or an unknown author, is not a citation", () => {
+  assert.deepEqual(hits(page(["(Nobody, 2019) and (Brown, 2001) and in 2019 (see above)", 50, 10]), AY_REFS), []);
+  assert.deepEqual(hits(page(["Smith 2020 without brackets", 50, 10]), AY_REFS), []);
+});
+
+const NUM_REFS = (() => {
+  const refs = page(["REFERENCES", 55, 50], ["[1] A. One, J. Fluid Mech., 2001.", 55, 70], ["[2] B. Two, Phys. Rev., 2002.", 55, 82], ["[3] C. Three, Nature, 2003.", 55, 94], ["[4] D. Four, Science, 2004.", 55, 106], ["[5] E. Five, Lab Chip, 2005.", 55, 118]);
+  return buildReferenceSet([{ page: 5, text: refs }], findReferenceStart([{ page: 5, text: refs }])!);
+})();
+
+test("numeric styles: [1], [1,2], [1–3], Ref. 3, Refs. 2 and 4, (1), and not equation numbers", () => {
+  assert.equal(NUM_REFS.mode, "num");
+  assert.deepEqual(hits(page(["as known [1] and [2, 4–5] too", 50, 10]), NUM_REFS), [["1"], ["2", "4", "5"]]);
+  assert.deepEqual(hits(page(["see Ref. 3 and Refs. 2 and 4", 50, 10]), NUM_REFS), [["3"], ["2", "4"]]);
+  assert.deepEqual(hits(page(["previous work (1,2) and (3)", 50, 10]), NUM_REFS), [["1", "2"], ["3"]]);
+  assert.deepEqual(hits(page(["from Eq. (3) and Fig. (2) with x = (1) done", 50, 10]), NUM_REFS), [], "equation and figure numbers are not citations");
+  assert.deepEqual(hits(page(["unknown [99] marker", 50, 10]), NUM_REFS), []);
+});
+
+test("numbered lists in other forms: '1.', '(1)', 'REFERENCES AND NOTES', '6. References'", () => {
+  for (const [head, fmt] of [["References and Notes", (n: number) => `${n}. Author, J. Chem., 20${n}0.`], ["6. References", (n: number) => `(${n}) Author, J. Chem., 20${n}0.`], ["Bibliography", (n: number) => `${n} Author, J. Chem., 20${n}0.`]] as const) {
+    const refs = page([head, 55, 50], ...[1, 2, 3, 4].map((n, i) => [fmt(n), 55, 70 + i * 12] as [string, number, number]));
+    const start = findReferenceStart([{ page: 3, text: refs }]);
+    assert.ok(start, head);
+    assert.equal(buildReferenceSet([{ page: 3, text: refs }], start!).numbered.size, 4, head);
+  }
+});
+
+test("vancouver-style unnumbered author lists parse too", () => {
+  const refs = page(["Smith AB, Jones C. A title here. Nature. 2019;5:1-9.", 55, 70], ["Lee K, Park S. Another title. Cell. 2018;3:10-20.", 55, 82], ["Brown T. Third. Lab Chip. 2017;2:1-3.", 55, 94], ["Zhang W. Fourth. Science. 2016;1:1-2.", 55, 106], ["Wang L. Fifth. PNAS. 2015;1:3-4.", 55, 118]);
+  const ay = parseAuthorYearReferences([{ page: 1, text: refs }], { page: 0, line: -1 });
+  assert.deepEqual(ay.map((e) => `${e.surname} ${e.year}`), ["smith 2019", "lee 2018", "brown 2017", "zhang 2016", "wang 2015"]);
+});
+
+import { findNumberedRunStart } from "../src/citations.ts";
+
+test("AIP lists (number glued to the first author) and APS lists (no heading at all)", () => {
+  const aip = page(["References", 55, 50], ["1P. G. Saffman and G. Taylor, “The penetration,” Proc. R. Soc. 1958.", 44, 70], ["2G. Rousseaux, A. De Wit, J. Chromatogr. 2007.", 44, 82], ["3A. Kopp, H. Class, Int. J. Greenhouse 2009.", 44, 94]);
+  assert.equal(buildReferenceSet([{ page: 1, text: aip }], findReferenceStart([{ page: 1, text: aip }])!).numbered.size, 3);
+  const aps = page(["ACKNOWLEDGMENTS", 55, 40], ...[1, 2, 3, 4, 5, 6].map((n, i) => [`[${n}] Author ${n}, Phys. Rev. E 8${n}, 0${n}0000 (2019).`, 55, 60 + i * 12] as [string, number, number]));
+  assert.equal(findReferenceStart([{ page: 4, text: aps }]), null);
+  const start = findNumberedRunStart([{ page: 4, text: aps }]);
+  assert.ok(start);
+  assert.equal(buildReferenceSet([{ page: 4, text: aps }], start!).numbered.size, 6);
+});
+
+test("stray numbered table rows do not turn an author-year list into a numeric one", () => {
+  const refs = page(["References", 55, 40], ["1 2 3 table row", 55, 52], ["2 4 5 table row", 55, 62], ["3 6 7 table row", 55, 72], ...[["Adams, A. (2001). T1. J, 1, 1.", 55, 90], ["Baker, B. (2002). T2. J, 2, 2.", 55, 102], ["Clark, C. (2003). T3. J, 3, 3.", 55, 114], ["Davis, D. (2004). T4. J, 4, 4.", 55, 126], ["Evans, E. (2005). T5. J, 5, 5.", 55, 138], ["Frank, F. (2006). T6. J, 6, 6.", 55, 150], ["Green, G. (2007). T7. J, 7, 7.", 55, 162], ["Hall, H. (2008). T8. J, 8, 8.", 55, 174]] as Array<[string, number, number]>);
+  const set = buildReferenceSet([{ page: 1, text: refs }], { page: 1, line: 0 });
+  assert.equal(set.mode, "ay");
+});

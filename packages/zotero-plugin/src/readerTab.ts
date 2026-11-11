@@ -27,7 +27,7 @@ import { keyToAction } from "./readerKeys.ts";
 import {
   charOffsetOnPage, codePoints, hitTest, selectionRects, selectionText, wordRange, type PageText, type TextPos,
 } from "./textModel.ts";
-import { citationRect, citationsInLine, findReferenceStart, looksLikeCitationLabel, numberedEntryY, parseReferences, referenceAt, singleNumber, textInRect, type Citation, type RefEntry } from "./citations.ts";
+import { buildReferenceSet, findNumberedRunStart, findPageCitations, findReferenceStart, looksLikeCitationLabel, numberedEntryY, referenceAt, singleNumber, textInRect, type CiteMatch, type ReferenceSet } from "./citations.ts";
 
 interface CiteItem {
   label: string;
@@ -238,9 +238,9 @@ export class ReaderTab {
   private textWaiters: Array<() => void> = [];
   private links = new Map<number, LinkData[]>();
   // citations -> reference list
-  private refs: Map<number, RefEntry> | null = null;
+  private refs: ReferenceSet | null = null;
   private refsState: "idle" | "loading" | "done" = "idle";
-  private citeCache = new Map<number, Array<{ c: Citation; rect: Rect }>>();
+  private citeCache = new Map<number, CiteMatch[]>();
   private citeShowTimer: number | null = null;
   private citeHideTimer: number | null = null;
   private citeKey: string | null = null;
@@ -746,34 +746,37 @@ export class ReaderTab {
     if (this.refsState !== "idle" || !this.pages.length) return;
     this.refsState = "loading";
     const n = this.pages.length;
-    const idx = Array.from({ length: Math.min(n, 16) }, (_, i) => n - Math.min(n, 16) + i);
-    await this.loadTexts(idx);
-    const pages = idx.filter((p) => this.texts.has(p)).map((p) => ({ page: p, text: this.texts.get(p)! }));
-    const start = findReferenceStart(pages);
-    this.refs = start ? parseReferences(pages, start) : new Map();
+    const CHUNK = 16;
+    const gathered: Array<{ page: number; text: PageText }> = [];
+    let set: ReferenceSet | null = null;
+    // the list is normally in the last pages, but supplements can follow it: widen the window chunk by chunk
+    for (let c = 0; c < 5 && !set; c++) {
+      const hi = n - c * CHUNK;
+      if (hi <= 0) break;
+      const idx = Array.from({ length: Math.min(CHUNK, hi) }, (_, i) => hi - Math.min(CHUNK, hi) + i);
+      await this.loadTexts(idx);
+      gathered.unshift(...idx.filter((p) => this.texts.has(p)).map((p) => ({ page: p, text: this.texts.get(p)! })));
+      const start = findReferenceStart(gathered) ?? findNumberedRunStart(gathered);
+      const found = start ? buildReferenceSet(gathered, start) : null;
+      set = found && (found.numbered.size >= 3 || found.ay.length >= 5) ? found : null;
+    }
+    this.refs = set;
     this.refsState = "done";
     this.citeCache.clear();
   }
 
-  private citationsOnPage(page: number): Array<{ c: Citation; rect: Rect }> {
+  private citationsOnPage(page: number): CiteMatch[] {
     const hit = this.citeCache.get(page);
     if (hit) return hit;
     const text = this.texts.get(page);
-    if (!text || !this.refs?.size) return [];
-    const out: Array<{ c: Citation; rect: Rect }> = [];
-    text.lines.forEach((l, i) => {
-      for (const c of citationsInLine(l, i)) {
-        if (!c.nums.some((n) => this.refs!.has(n))) continue;
-        const rect = citationRect(l, c);
-        if (rect) out.push({ c, rect });
-      }
-    });
+    if (!text || !this.refs) return [];
+    const out = findPageCitations(text, this.refs);
     this.citeCache.set(page, out);
     return out;
   }
 
-  private citationAt(page: number, x: number, y: number): { c: Citation; rect: Rect } | null {
-    return this.citationsOnPage(page).find(({ rect: r }) => x >= r[0] - 1.5 && x <= r[0] + r[2] + 1.5 && y >= r[1] - 1.5 && y <= r[1] + r[3] + 1.5) ?? null;
+  private citationAt(page: number, x: number, y: number): CiteMatch | null {
+    return this.citationsOnPage(page).find((m) => m.rects.some((r) => x >= r[0] - 1.5 && x <= r[0] + r[2] + 1.5 && y >= r[1] - 1.5 && y <= r[1] + r[3] + 1.5)) ?? null;
   }
 
   /** Right-click on an entry of the citation popup. */
@@ -782,7 +785,7 @@ export class ReaderTab {
     this.citeKey = null;
     this.view.showMenuAt(x, y, [
       { label: "Copy reference", icon: "copy", disabled: !item.text, run: () => this.d.host.copyText(item.text) },
-      { label: "Copy reference with number", icon: "copy", disabled: !item.text, run: () => this.d.host.copyText(`${item.label.replace(/[\[\]]/g, "")}. ${item.text}`) },
+      ...(/^\[?\d+\]?$/.test(item.label) ? [{ label: "Copy reference with number", icon: "copy" as const, disabled: !item.text, run: () => this.d.host.copyText(`${item.label.replace(/[\[\]]/g, "")}. ${item.text}`) }] : []),
       { separator: true, label: "" },
       { label: "Go to reference", icon: "book-open", run: item.go },
     ]);
@@ -793,11 +796,6 @@ export class ReaderTab {
     const v = this.pxRect(page, [0, Math.max(0, y - 6), 1, 1]);
     this.view.scroller.scrollTop = Math.max(0, this.layout.tops[page]! + v[1] - this.view.viewport.height / 4);
     this.onScrolled(true);
-  }
-
-  private goToReference(n: number): void {
-    const e = this.refs?.get(n);
-    if (e) this.scrollToPageY(e.page, e.y);
   }
 
   /** Page-space y of the spot an internal link points at, if the file says (and it is a real position). */
@@ -841,8 +839,8 @@ export class ReaderTab {
     const cite = this.tool ? null : this.citationAt(page, x, y);
     if (cite) {
       return {
-        key: `${page}:${cite.c.line}:${cite.c.from}`,
-        items: async () => cite.c.nums.slice(0, 12).map((n) => ({ label: String(n), text: this.refs?.get(n)?.text ?? "", go: () => this.goToReference(n) })),
+        key: `${page}:${cite.key}`,
+        items: async () => cite.items.slice(0, 12).map((it) => ({ label: it.label, text: it.text, go: () => this.scrollToPageY(it.page, it.y) })),
       };
     }
     const link = this.tool ? null : this.linkAt(page, x, y);
@@ -1128,7 +1126,8 @@ export class ReaderTab {
           if (cite) {
             this.view.hidePopups();
             this.citeKey = null;
-            return this.goToReference(cite.c.nums.find((n) => this.refs?.has(n)) ?? cite.c.nums[0]!);
+            const first = cite.items[0]!;
+            return this.scrollToPageY(first.page, first.y);
           }
         }
         return this.clearSelection();

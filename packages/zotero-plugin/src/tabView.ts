@@ -227,7 +227,7 @@ const CSS = `
 .fr-cite-list{width:360px;max-width:80vw;max-height:260px;overflow:auto}
 .fr-cite{display:flex;gap:8px;padding:5px 7px;border-radius:5px;font-size:12px;line-height:1.35;cursor:default}
 .fr-cite:hover{background:var(--fr-hover)}
-.fr-cite-n{flex:none;min-width:1.6em;font-weight:600;opacity:.65;text-align:end}
+.fr-cite-n{flex:none;min-width:1.6em;max-width:9em;font-weight:600;opacity:.65;text-align:end}
 .fr-ann img{display:block;max-width:100%;margin:4px 0;border-radius:3px}
 .fr-brand{display:inline-flex;align-items:center;gap:5px;padding:0 6px 0 2px;opacity:.85;font-weight:600;font-size:12px;cursor:default}
 .fr-ov .fr-o-note{border-radius:3px 3px 3px 0;box-shadow:0 1px 3px rgba(0,0,0,.4);opacity:.95;border:1px solid rgba(0,0,0,.35)}
