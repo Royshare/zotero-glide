@@ -93,6 +93,20 @@ pub struct ExportAnnotation {
     pub contents: String,
 }
 
+/// An annotation stored inside the PDF file itself (made by another reader, or by "Export with annotations").
+#[derive(Debug, Clone, PartialEq)]
+pub struct EmbeddedAnnotation {
+    /// highlight | underline | note | text | ink
+    pub kind: &'static str,
+    /// `[x, y, w, h]` in page space
+    pub rects: Vec<[f32; 4]>,
+    pub color: Option<[f32; 3]>,
+    pub contents: String,
+    pub author: String,
+    /// the page text under a highlight/underline
+    pub text: String,
+}
+
 #[derive(Debug)]
 pub enum EngineError {
     /// The file does not exist or isn't readable.
@@ -145,6 +159,14 @@ pub trait DocumentEngine: Sized {
     fn page_text(&self, page: u32) -> Result<PageText, EngineError>;
     fn outline(&self) -> Result<Vec<OutlineItem>, EngineError>;
     fn links(&self, page: u32) -> Result<Vec<LinkInfo>, EngineError>;
+    /// The annotations stored in the PDF file on a page (read-only; Zotero's own live in its database).
+    fn embedded_annotations(&self, _page: u32) -> Result<Vec<EmbeddedAnnotation>, EngineError> {
+        Ok(Vec::new())
+    }
+    /// Where raster images are painted on the page, `[x, y, w, h]` in page space (the host's dark mode leaves them alone).
+    fn image_rects(&mut self, _page: u32) -> Result<Vec<[f32; 4]>, EngineError> {
+        Ok(Vec::new())
+    }
     /// Bounding box of everything painted on the page, `[x0, y0, x1, y1]` in page space (None: blank).
     fn content_bbox(&mut self, page: u32) -> Result<Option<[f32; 4]>, EngineError>;
     /// Writes a copy of the document with `annots` embedded; returns how many were embedded.
@@ -535,6 +557,39 @@ pub mod mupdf_engine {
             })
         }
 
+        fn image_rects(&mut self, page: u32) -> Result<Vec<[f32; 4]>, EngineError> {
+            use mupdf::{Device, Matrix, Rect};
+            use mupdf::device::NativeDevice;
+            use std::{cell::RefCell, rc::Rc};
+            struct Recorder(Rc<RefCell<Vec<[f32; 4]>>>);
+            impl NativeDevice for Recorder {
+                fn fill_image(&mut self, _img: &mupdf::Image, cmt: Matrix, _alpha: f32, _cp: mupdf::ColorParams) {
+                    // an image fills the unit square transformed by `cmt`
+                    let pts = [cmt.transform_xy(0.0, 0.0), cmt.transform_xy(1.0, 0.0), cmt.transform_xy(0.0, 1.0), cmt.transform_xy(1.0, 1.0)];
+                    let x0 = pts.iter().map(|p| p.0).fold(f32::MAX, f32::min);
+                    let y0 = pts.iter().map(|p| p.1).fold(f32::MAX, f32::min);
+                    let x1 = pts.iter().map(|p| p.0).fold(f32::MIN, f32::max);
+                    let y1 = pts.iter().map(|p| p.1).fold(f32::MIN, f32::max);
+                    if x1 - x0 >= 4.0 && y1 - y0 >= 4.0 {
+                        self.0.borrow_mut().push([x0, y0, x1 - x0, y1 - y0]);
+                    }
+                }
+            }
+            self.check_bounds(page)?;
+            let found = Rc::new(RefCell::new(Vec::new()));
+            let device = Device::from_native(Recorder(found.clone())).map_err(|e| EngineError::Other(e.to_string()))?;
+            let list = self.display_list_for(page)?;
+            list.run(&device, &Matrix::IDENTITY, Rect::INF).map_err(|e| EngineError::Other(e.to_string()))?;
+            drop(device);
+            let out = found.borrow().clone();
+            // scanning a whole scanned book for pictures would otherwise pile its decoded page images up in MuPDF's store
+            self.renders_since_open += 1;
+            if self.renders_since_open >= FLUSH_EVERY_RENDERS {
+                self.release_caches();
+            }
+            Ok(out)
+        }
+
         fn content_bbox(&mut self, page: u32) -> Result<Option<[f32; 4]>, EngineError> {
             const S: f32 = 0.3; // a coarse render is plenty to find the ink
             let r = self.render(page, S)?;
@@ -817,6 +872,26 @@ mod tests {
         let i = ((cy * r.width + cx) * 4) as usize;
         let (pr, pg, pb) = crate::frame::over_white(r.rgba[i], r.rgba[i + 1], r.rgba[i + 2], r.rgba[i + 3]);
         assert!(pr > 200 && pg > 150 && pb < 200, "expected yellow highlight at the line, got ({pr},{pg},{pb})");
+        std::fs::remove_dir_all(path.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn embedded_annotations_come_back_with_geometry_color_text_and_contents() {
+        let (e, path) = std_engine("embedded");
+        let t = e.page_text(0).unwrap();
+        let line = t.lines.iter().find(|l| l.text.contains("Hello world")).unwrap().bbox;
+        let out = path.parent().unwrap().join("emb.pdf");
+        e.export_annotated(&out, &[ExportAnnotation { page: 0, kind: ExportKind::Highlight, rects: vec![line], color: [1.0, 0.0, 0.0], contents: "why".into() }]).unwrap();
+        assert!(e.embedded_annotations(0).unwrap().is_empty(), "the original has none");
+        let re = MuPdfDocumentEngine::open(&out).unwrap();
+        let a = re.embedded_annotations(0).unwrap();
+        assert_eq!(a.len(), 1);
+        assert_eq!(a[0].kind, "highlight");
+        assert_eq!(a[0].contents, "why");
+        assert!(a[0].text.contains("Hello world"), "text under the highlight: {:?}", a[0].text);
+        let r = a[0].rects[0];
+        assert!((r[0] - line[0]).abs() < 2.0 && (r[1] - line[1]).abs() < 2.0, "rect {r:?} vs line {line:?}");
+        assert!(a[0].color.unwrap()[0] > 0.9);
         std::fs::remove_dir_all(path.parent().unwrap()).ok();
     }
 
