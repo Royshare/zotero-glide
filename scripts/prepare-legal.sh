@@ -16,7 +16,9 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LEGAL="$ROOT/packages/zotero-plugin/addon/legal"
-VERSION="$(node -p "require('$ROOT/packages/zotero-plugin/package.json').version")"
+# Git Bash's /c/... paths are not native Node.js paths when embedded in JS.
+# Resolve package.json from the working directory so this also works on Windows.
+VERSION="$(cd "$ROOT/packages/zotero-plugin" && node -p "require('./package.json').version")"
 URL="${FAST_READER_SOURCE_URL:-}"
 COMMIT="${FAST_READER_SOURCE_COMMIT:-$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || true)}"
 

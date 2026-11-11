@@ -49,6 +49,63 @@ Anything else (32-bit Windows, Linux arm64, etc.) is deliberately
 unsupported in v0.1 and reported as an "unsupported platform" error (brief
 §12) rather than guessed at.
 
+## Building on Windows from PowerShell
+
+Install Rust stable for `x86_64-pc-windows-msvc`, Visual Studio C++ Build
+Tools with a Windows SDK, Node.js, and Git for Windows. The npm hooks use
+Git Bash; put its `bin` directory before Windows' WSL `bash.exe` on PATH.
+MuPDF also needs libclang for generating Rust bindings. Either set
+`LIBCLANG_PATH` to your LLVM installation's `bin` directory, or install
+the standalone DLL locally with Python as below (it is only a build
+dependency and is not included in the XPI).
+
+Run from the repository root:
+
+```powershell
+$env:Path = "C:\Program Files\Git\bin;$env:Path"
+python -m pip install --target packages/reader-helper/target/build-tools/libclang libclang==18.1.1
+$env:LIBCLANG_PATH = (Resolve-Path packages/reader-helper/target/build-tools/libclang/clang/native).Path
+
+# Match the installed Visual Studio PlatformToolset. This PC uses v145
+# (VS 2026); VS 2022 uses v143. mupdf-sys 0.8.0 otherwise guesses v142
+# for VS 2026 and fails even when the newer compiler is installed.
+$env:MUPDF_MSVC_PLATFORM_TOOLSET = 'v145'
+
+Set-Location packages/zotero-plugin
+npm ci
+npm run build
+```
+
+The result is `packages/zotero-plugin/.scaffold/build/zotero-fast-reader.xpi`,
+containing `bin/windows-x64/fast-reader-helper.exe`. Install it using
+Zotero's Tools → Plugins → gear → Install Plugin From File.
+
+The Windows branch of `build-helper.sh` pre-includes `scripts/msvc-bindgen.h`
+for bindgen. This supplies MSVC's `max_align_t` declaration, missing from its
+C headers but required by mupdf 0.8.0
+([upstream issue](https://github.com/messense/mupdf-rs/issues/222)). It leaves
+the Cargo registry and other platforms untouched. For direct Cargo builds
+or tests, set the same include explicitly, from the repository root:
+
+```powershell
+$header = (Resolve-Path scripts/msvc-bindgen.h).Path.Replace('\', '/')
+$env:BINDGEN_EXTRA_CLANG_ARGS = '-include "' + $header + '"'
+python scripts/gen_fixtures.py
+Set-Location packages/reader-helper
+cargo test --release --locked
+```
+
+Plugin tests use `npm test` on Node 24+, or
+`node --experimental-strip-types --test` on Node 22.
+
+Verified locally on Windows x64 on 2026-11-11 with Rust 1.99.1, VS 2026
+toolset v145, libclang 18.1.1, and Node 22.23.2: release build, all 86
+native tests, all 120 plugin tests, TypeScript checking, and XPI packaging
+passed. The helper extracted from the finished XPI was checked as an AMD64
+PE executable matching the release binary, then used to render a real
+three-page fixture, extract text, search, trim/reopen, and exit cleanly.
+Manual interaction with the installed plugin inside Zotero is still pending.
+
 ## Code signing implications
 
 **[NOT DONE for v0.1 -- documented for whoever picks this up next.]**
@@ -91,7 +148,8 @@ AGPL corresponding-source archive (`scripts/make-source-archive.sh`: project +
 `cargo vendor`, MuPDF included), and publishes the three files with SHA256SUMS.
 
 **Honest status:** the scripts the workflows call were run locally on macOS
-arm64, but the workflows themselves have never run on GitHub. The Windows leg
-(MuPDF's MSBuild + bindgen/libclang on the runner) and the Intel macOS leg are
-the likeliest to need a first-run fix. Signing/notarization (above) is still not
-done, so release binaries will trigger Gatekeeper/SmartScreen warnings.
+arm64, and Windows x64 was built and tested locally as described above, but
+the workflows themselves have never run on GitHub. The Windows runner's
+MuPDF/MSBuild/libclang setup and the Intel macOS leg still need verification
+on GitHub. Signing/notarization (above) is still not done, so release binaries
+will trigger Gatekeeper/SmartScreen warnings.

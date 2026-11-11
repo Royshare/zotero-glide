@@ -40,6 +40,12 @@ case "$os" in
   MINGW*|MSYS*|CYGWIN*)
     platform_dir="windows-x64"
     bin_name="fast-reader-helper.exe"
+    # The safe mupdf crate requires max_align_t, absent from MSVC's C headers.
+    # Give bindgen the matching declaration without changing registry sources.
+    bindgen_header="$(cygpath -m "$ROOT/scripts/msvc-bindgen.h")"
+    if [[ "${BINDGEN_EXTRA_CLANG_ARGS:-}" != *"$bindgen_header"* ]]; then
+      export BINDGEN_EXTRA_CLANG_ARGS="${BINDGEN_EXTRA_CLANG_ARGS:+$BINDGEN_EXTRA_CLANG_ARGS }-include \"$bindgen_header\""
+    fi
     ;;
   *)
     echo "Unsupported OS: $os" >&2; exit 1 ;;
