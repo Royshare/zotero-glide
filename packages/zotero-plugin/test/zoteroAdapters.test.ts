@@ -10,10 +10,12 @@ test("parseSettings falls back field by field on junk, and clamps the reading si
   assert.deepEqual(parseSettings("{nope"), d);
   assert.deepEqual(parseSettings("[]"), d);
   const s = parseSettings(JSON.stringify({ theme: "dark", sidebarOpen: true, sidebarTab: "outline", readingFontSize: 99, color: "#aaaaaa" }));
-  assert.deepEqual(s, { theme: "dark", sidebarOpen: true, sidebarTab: "outline", readingFontSize: 32, color: "#aaaaaa" });
+  assert.deepEqual(s, { theme: "dark", sidebarOpen: true, sidebarWidth: 236, sidebarTab: "outline", readingFontSize: 32, color: "#aaaaaa" });
   const bad = parseSettings(JSON.stringify({ theme: "neon", sidebarOpen: "yes", sidebarTab: 3, readingFontSize: "big", color: "red" }));
   assert.deepEqual(bad, d);
   assert.equal(parseSettings(JSON.stringify({ readingFontSize: 2 })).readingFontSize, 12);
+  assert.equal(parseSettings(JSON.stringify({ sidebarWidth: 9999 })).sidebarWidth, 600);
+  assert.equal(parseSettings(JSON.stringify({ sidebarWidth: 10 })).sidebarWidth, 180);
 });
 
 test("the settings store merges a patch into what is saved", () => {
