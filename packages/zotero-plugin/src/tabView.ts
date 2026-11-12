@@ -219,7 +219,6 @@ const CSS = `
 .fr-ov .fr-o-image{border:2px solid var(--c);background:color-mix(in srgb,var(--c) 14%,transparent)}
 .fr-ov .fr-o-area{border:1.5px dashed AccentColor;background:color-mix(in srgb,AccentColor 15%,transparent)}
 .fr-figs{padding:6px}
-.fr-figs-save{width:100%;gap:6px;border:1px solid var(--fr-border);margin-bottom:2px}
 .fr-fig-page{display:flex;align-items:center;gap:8px;margin:10px 0 6px;font-size:11px;opacity:.7}
 .fr-fig-page::before,.fr-fig-page::after{content:"";flex:1;border-top:1px solid var(--fr-border)}
 .fr-fig{display:block;width:100%;border:1px solid var(--fr-border);border-radius:4px;background:#fff;overflow:hidden;cursor:default;margin-bottom:6px;box-sizing:border-box}
@@ -1080,7 +1079,7 @@ export class ReaderView {
   }
 
   /** The Images sidebar tab: one placeholder per figure (`aspect` = height/width), grouped under page numbers. */
-  renderFigures(items: Array<{ page: number; aspect: number }>, onClick: (i: number) => void, onMenu: (i: number, x: number, y: number) => void = () => {}, onSaveAll: () => void = () => {}): void {
+  renderFigures(items: Array<{ page: number; aspect: number }>, onClick: (i: number) => void, onMenu: (i: number, x: number, y: number) => void = () => {}): void {
     this.sideBody.replaceChildren();
     this.thumbEls = [];
     this.figEls = [];
@@ -1093,11 +1092,6 @@ export class ReaderView {
     }
     const wrap = this.doc.createElementNS(XHTML, "div") as HTMLElement;
     wrap.className = "fr-figs";
-    const saveAll = this.doc.createElementNS(XHTML, "button") as HTMLButtonElement;
-    saveAll.className = "fr-btn fr-figs-save";
-    saveAll.append(createIcon(this.doc, "download", 14), this.doc.createTextNode(`Save all images (${items.length})…`));
-    saveAll.addEventListener("click", onSaveAll);
-    wrap.append(saveAll);
     let lastPage = -1;
     items.forEach((it, i) => {
       if (it.page !== lastPage) {

@@ -1579,7 +1579,7 @@ export class ReaderTab {
     if (!figs) return;
     this.figureUrlAt.clear();
     for (const u of this.figureUrls.splice(0)) this.view.revokeUrl(u);
-    this.view.renderFigures(figs.map((f) => ({ page: f.page, aspect: f.rect[3] / f.rect[2] })), (i) => this.goToPage(figs[i]!.page), (i, x, y) => this.showFigureMenu(i, figs[i]!.page, x, y), () => void this.saveAllFigures());
+    this.view.renderFigures(figs.map((f) => ({ page: f.page, aspect: f.rect[3] / f.rect[2] })), (i) => this.goToPage(figs[i]!.page), (i, x, y) => this.showFigureMenu(i, figs[i]!.page, x, y));
     void (async () => {
       for (let i = 0; i < figs.length; i++) {
         if (token !== this.figuresToken || this.disposed || this.view.sidebarTabNow !== "images") return;
