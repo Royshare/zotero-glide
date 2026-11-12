@@ -867,7 +867,7 @@ export class ReaderView {
     ta.focus();
   }
 
-  showMenu(anchor: HTMLElement, items: MenuItem[]): void {
+  private renderMenu(items: MenuItem[]): void {
     this.hidePopups();
     this.popup.classList.add("fr-menu");
     for (const it of items) {
@@ -895,16 +895,19 @@ export class ReaderView {
       });
       this.popup.append(b);
     }
+  }
+
+  showMenu(anchor: HTMLElement, items: MenuItem[]): void {
+    this.renderMenu(items);
     const r = anchor.getBoundingClientRect();
     this.placePopup(r.right - 240, r.bottom);
   }
 
   /** A context menu at a pointer position. */
   showMenuAt(x: number, y: number, items: MenuItem[]): void {
-    const probe = this.doc.createElementNS(XHTML, "span") as HTMLElement;
-    probe.getBoundingClientRect = () => new DOMRect(x, y, 0, 0);
-    this.showMenu(probe, items);
-    // showMenu right-aligns to the anchor; re-place at the pointer instead
+    // The plugin runs outside a window global, where DOMRect is unavailable.
+    // Pointer menus can be placed directly without a synthetic DOM anchor.
+    this.renderMenu(items);
     this.placePopup(x, y - 10);
   }
 
