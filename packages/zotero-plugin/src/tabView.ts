@@ -200,8 +200,8 @@ const CSS = `
 .fr-outline li>div:hover{background:var(--fr-hover)}
 .fr-twisty{width:14px;opacity:.7;text-align:center;flex:none}
 .fr-scroller{position:relative;flex:1;min-width:0;overflow:auto;background:var(--fr-stage);scrollbar-gutter:stable}
-.fr-pages{position:relative;min-width:100%}
-.fr-page{position:absolute;background:#fff;box-shadow:0 1px 5px rgba(0,0,0,.4);user-select:none;-moz-user-select:none;cursor:text}
+.fr-pages{position:relative;min-width:100%;cursor:text}
+.fr-page{position:absolute;background:#fff;box-shadow:0 1px 5px rgba(0,0,0,.4);user-select:none;-moz-user-select:none;cursor:inherit}
 .fr-page canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
 .fr-ov{position:absolute;inset:0;pointer-events:none;overflow:hidden}
 .fr-ov>div{position:absolute;box-sizing:border-box}
@@ -228,7 +228,7 @@ const CSS = `
 .fr-prev-h{font-size:11px;font-weight:600;opacity:.7;padding:2px 4px 4px}
 .fr-prev img{display:block;max-width:100%;background:#fff;border-radius:3px}
 .fr-cite-list{width:360px;max-width:80vw;max-height:260px;overflow:auto}
-.fr-cite{display:flex;gap:8px;padding:5px 7px;border-radius:5px;font-size:12px;line-height:1.35;cursor:default}
+.fr-cite{display:flex;gap:8px;padding:5px 7px;border-radius:5px;font-size:12px;line-height:1.35;cursor:pointer}
 .fr-cite:hover{background:var(--fr-hover)}
 .fr-cite-n{flex:none;min-width:1.6em;max-width:9em;font-weight:600;opacity:.65;text-align:end}
 .fr-ann img{display:block;max-width:100%;margin:4px 0;border-radius:3px}
@@ -515,7 +515,7 @@ export class ReaderView {
   }
   setTool(tool: Tool): void {
     for (const [id, b] of this.toolButtons) b.setAttribute("aria-pressed", String(id === tool));
-    this.scroller.style.cursor = tool === "note" || tool === "image" ? "crosshair" : "";
+    this.setCursor(tool === "note" || tool === "image" ? "crosshair" : "");
   }
   setColor(hex: string): void {
     this.colorDot.style.background = hex;
