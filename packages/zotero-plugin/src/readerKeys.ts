@@ -31,6 +31,7 @@ export type ReaderAction =
   | { type: "focusPage" }
   | { type: "copy" }
   | { type: "selectAll" }
+  | { type: "back" }
   | { type: "escape" };
 
 export const ZOOM_STEP = 1.15;
@@ -39,6 +40,9 @@ export const ZOOM_STEP = 1.15;
 export function keyToAction(ev: KeyLike, ctx: KeyContext): ReaderAction | null {
   const primary = ctx.isMac ? ev.metaKey : ev.ctrlKey;
   const k = ev.key;
+
+  // back to where an internal link or citation was followed from (Zotero: Alt+Left / Cmd+[)
+  if ((k === "ArrowLeft" && ev.altKey && !primary && !ev.shiftKey) || (k === "[" && primary && !ev.altKey)) return { type: "back" };
 
   if (primary && !ev.altKey) {
     switch (k.toLowerCase()) {

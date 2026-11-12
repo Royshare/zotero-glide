@@ -7,6 +7,7 @@ pub mod cache;
 pub mod engine;
 pub mod frame;
 pub mod geometry;
+pub mod headings;
 pub mod log;
 pub mod serve;
 pub mod session;

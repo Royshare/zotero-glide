@@ -80,31 +80,99 @@ export function rectToView(page: PageInfo, view: ViewSettings, r: Rect): Rect {
   return [Math.min(x0, x1), Math.min(y0, y1), Math.abs(x1 - x0), Math.abs(y1 - y0)];
 }
 
+/** How pages are arranged, mirroring Zotero's own reader: scrolling (vertical / wrapped) and spreads. */
+export type ScrollMode = "vertical" | "wrapped";
+/** none = one page per row; odd = (1,2)(3,4)...; even = 1 alone, then (2,3)(4,5)... */
+export type SpreadMode = "none" | "odd" | "even";
+
+export interface Arrangement {
+  scroll: ScrollMode;
+  spread: SpreadMode;
+}
+
+export const DEFAULT_ARRANGEMENT: Arrangement = { scroll: "vertical", spread: "none" };
+
+export function isScrollMode(v: unknown): v is ScrollMode {
+  return v === "vertical" || v === "wrapped";
+}
+export function isSpreadMode(v: unknown): v is SpreadMode {
+  return v === "none" || v === "odd" || v === "even";
+}
+
+/** Groups page indices into spreads (units that always sit side by side). */
+export function spreadGroups(count: number, spread: SpreadMode): number[][] {
+  const groups: number[][] = [];
+  let i = 0;
+  if (spread === "even" && count > 0) groups.push([i++]);
+  while (i < count) {
+    if (spread !== "none" && i + 1 < count) groups.push([i, i + 1]);
+    else groups.push([i]);
+    i += spread === "none" ? 1 : 2;
+  }
+  return groups;
+}
+
 export interface Layout {
   /** px from the top of the scroll content to the top of each page */
   tops: number[];
+  /** px from the left edge of the widest row to the left of each page (rows are centred within it) */
+  lefts: number[];
   heights: number[];
   widths: number[];
   total: number;
+  /** width of the widest row, px */
   maxWidth: number;
 }
 
-/** Vertical stack of pages at `scale` px per point with `gap` px between them and `margin` px around. */
-export function computeLayout(pages: PageInfo[], view: ViewSettings, scale: number, gap = 8, margin = 8): Layout {
-  const tops: number[] = [];
-  const heights: number[] = [];
-  const widths: number[] = [];
-  let y = margin;
-  let maxWidth = 0;
-  for (const p of pages) {
+/**
+ * Pages at `scale` px per point with `gap` px between them and `margin` px around. Pages form spreads
+ * (see `spreadGroups`); spreads are stacked one per row ("vertical") or packed into rows of up to
+ * `availWidth` px ("wrapped"). `tops` never decreases with the page index, which the lookups below rely on.
+ */
+export function computeLayout(
+  pages: PageInfo[], view: ViewSettings, scale: number, gap = 8, margin = 8,
+  arrange: Arrangement = DEFAULT_ARRANGEMENT, availWidth = Infinity,
+): Layout {
+  const n = pages.length;
+  const tops = new Array<number>(n).fill(0);
+  const lefts = new Array<number>(n).fill(0);
+  const heights = new Array<number>(n).fill(0);
+  const widths = new Array<number>(n).fill(0);
+  pages.forEach((p, i) => {
     const s = viewSize(p, view);
-    tops.push(y);
-    heights.push(s.h * scale);
-    widths.push(s.w * scale);
-    maxWidth = Math.max(maxWidth, s.w * scale);
-    y += s.h * scale + gap;
+    widths[i] = s.w * scale;
+    heights[i] = s.h * scale;
+  });
+  const units = spreadGroups(n, arrange.spread).map((idx) => ({
+    idx,
+    w: idx.reduce((a, i) => a + widths[i]!, 0) + gap * (idx.length - 1),
+    h: Math.max(...idx.map((i) => heights[i]!)),
+  }));
+  // rows of units
+  const rows: Array<typeof units> = [];
+  const limit = availWidth - 2 * margin;
+  for (const u of units) {
+    const row = rows[rows.length - 1];
+    const rowW = row ? row.reduce((a, r) => a + r.w, 0) + gap * (row.length - 1) : 0;
+    if (arrange.scroll === "wrapped" && row && rowW + gap + u.w <= limit) row.push(u);
+    else rows.push([u]);
   }
-  return { tops, heights, widths, total: y - gap + margin, maxWidth };
+  const rowWidth = (row: typeof units) => row.reduce((a, r) => a + r.w, 0) + gap * (row.length - 1);
+  const maxWidth = rows.reduce((m, r) => Math.max(m, rowWidth(r)), 0);
+  let y = margin;
+  for (const row of rows) {
+    const h = Math.max(...row.map((u) => u.h));
+    let x = (maxWidth - rowWidth(row)) / 2;
+    for (const u of row) {
+      for (const i of u.idx) {
+        tops[i] = y;
+        lefts[i] = x;
+        x += widths[i]! + gap;
+      }
+    }
+    y += h + gap;
+  }
+  return { tops, lefts, heights, widths, total: Math.max(0, y - gap) + margin, maxWidth };
 }
 
 /** Index of the page that contains scroll offset `y`, or the nearest page if `y` is in a gap. */
@@ -118,9 +186,16 @@ export function pageAtOffset(layout: Layout, y: number): number {
     if (layout.tops[mid]! <= y) lo = mid;
     else hi = mid - 1;
   }
-  // in the gap below page `lo`: whichever neighbor is closer
-  const bottom = layout.tops[lo]! + layout.heights[lo]!;
-  if (y > bottom && lo + 1 < n && layout.tops[lo + 1]! - y < y - bottom) return lo + 1;
+  // several pages share a row: report the first one
+  while (lo > 0 && layout.tops[lo - 1] === layout.tops[lo]) lo--;
+  // in the gap below the row: whichever neighbouring row is closer
+  let rowEnd = lo;
+  let bottom = layout.tops[lo]! + layout.heights[lo]!;
+  while (rowEnd + 1 < n && layout.tops[rowEnd + 1] === layout.tops[lo]) {
+    rowEnd++;
+    bottom = Math.max(bottom, layout.tops[rowEnd]! + layout.heights[rowEnd]!);
+  }
+  if (y > bottom && rowEnd + 1 < n && layout.tops[rowEnd + 1]! - y < y - bottom) return rowEnd + 1;
   return lo;
 }
 
@@ -149,10 +224,12 @@ export function fitScale(
   view: ViewSettings,
   viewportWidth: number,
   viewportHeight: number,
-  padding = 16
+  padding = 16,
+  columns = 1,
+  gap = 8
 ): number {
   const s = viewSize(page, view);
-  const byWidth = (viewportWidth - padding) / s.w;
+  const byWidth = (viewportWidth - padding - gap * (columns - 1)) / (s.w * columns);
   if (mode === "width") return byWidth;
   return Math.min(byWidth, (viewportHeight - padding) / s.h);
 }

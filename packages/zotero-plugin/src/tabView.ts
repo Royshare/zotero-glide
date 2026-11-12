@@ -11,29 +11,39 @@
  */
 
 import { ANNOTATION_COLORS } from "./annotations.ts";
-import { createIcon, type IconName } from "./icons.ts";
+import { createGlideMark, createIcon, type IconName } from "./icons.ts";
 import type { Layout } from "./layout.ts";
 import type { OutlineNode, Rect } from "./protocol.ts";
 
 const XHTML = "http://www.w3.org/1999/xhtml";
 
-export type Tool = "highlight" | "underline" | "note" | null;
-export type PageTheme = "light" | "dark" | "sepia";
-export type SidebarTab = "thumbnails" | "annotations" | "outline";
+export type Tool = "highlight" | "underline" | "note" | "image" | null;
+/** "auto" follows Zotero's light/dark appearance. */
+export type PageTheme = "auto" | "light" | "dark" | "black" | "sepia";
+export type SidebarTab = "thumbnails" | "annotations" | "outline" | "images";
 
 export interface OverlayItem {
-  kind: "search" | "search-current" | "selection" | "highlight" | "underline" | "note" | "link";
+  kind: "search" | "search-current" | "selection" | "highlight" | "underline" | "note" | "image" | "area" | "link" | "focus";
   /** px, relative to the page box (view space) */
   rect: Rect;
   color?: string;
   key?: string;
+  /** focus ring only: stored in the PDF file (read-only): dashed, with a tag */
+  external?: boolean;
+  /** focus ring only: play the arrival pulse */
+  pulse?: boolean;
 }
 
 export interface SidebarAnnotation {
   key: string;
-  kind: "highlight" | "underline" | "note";
+  kind: "highlight" | "underline" | "note" | "image" | "text" | "ink";
   color: string;
+  /** stored in the PDF file rather than in Zotero: shown read-only and marked */
+  external?: boolean;
+  author?: string;
   text: string;
+  /** object URL of the cropped picture (image annotations) */
+  image?: string;
   comment: string;
   pageLabel: string;
   page: number;
@@ -43,19 +53,23 @@ export interface MenuItem {
   label: string;
   icon?: IconName;
   checked?: boolean;
+  /** a color dot shown instead of an icon */
+  swatch?: string;
   disabled?: boolean;
   separator?: boolean;
   run?: () => void;
 }
 
 export interface PagePointer {
-  type: "down" | "move" | "up" | "dblclick" | "leave";
+  type: "down" | "move" | "up" | "dblclick" | "leave" | "contextmenu";
   clientX: number;
   clientY: number;
   shiftKey: boolean;
   /** 1 single, 2 double, 3 triple click */
   detail: number;
   button: number;
+  /** suppresses the native context menu (contextmenu events only) */
+  preventDefault?: () => void;
 }
 
 export interface ViewEvents {
@@ -66,6 +80,7 @@ export interface ViewEvents {
   key(e: KeyboardEvent): void;
   copy(e: ClipboardEvent): void;
   toggleSidebar(): void;
+  back(): void;
   prevPage(): void;
   nextPage(): void;
   gotoPage(n: number): void;
@@ -80,7 +95,56 @@ export interface ViewEvents {
   sidebarScrolled(): void;
   jumpToPage(page: number): void;
   jumpToAnnotation(key: string): void;
+  /** The page bitmaps must be redrawn (the dark pixel pass switched on or off). */
+  themeChanged(): void;
+  /** The sidebar card's inline comment box was edited. */
+  commentAnnotation(key: string, text: string): void;
+  /** Right-click on a sidebar card. */
+  annotationMenu(key: string, clientX: number, clientY: number): void;
   outlineClick(node: OutlineNode): void;
+}
+
+const DARK_BG = [0x2f, 0x33, 0x3d] as const;
+const DARK_FG = [0xdc, 0xe0, 0xe8] as const;
+/** per channel: luminance 0..255 -> slate..off-white (white paper -> slate, black text -> off-white) */
+const DARK_MAP = [0, 1, 2].map((c) => Uint8Array.from({ length: 256 }, (_, l) => Math.round(DARK_BG[c]! + ((255 - l) / 255) * (DARK_FG[c]! - DARK_BG[c]!))));
+const DIM = Uint8Array.from({ length: 256 }, (_, v) => Math.round(v * 0.88));
+
+/**
+ * Zotero-style dark recoloring, on a copy of the bitmap: gray paper and text go white..black -> slate..off-white,
+ * colored pixels are dimmed, and the page's raster images (`images`, bitmap pixels, from the renderer) are left
+ * exactly as they are, white background included. One cheap pass with lookup tables.
+ */
+export function darken(src: Uint8ClampedArray<ArrayBuffer>, width: number, height: number, images: Rect[] = []): Uint8ClampedArray<ArrayBuffer> {
+  const out = src; // in place: a frame is a private copy, and a second 11 MB buffer per page is memory the default reader does not use
+  let mask: Uint8Array | null = null;
+  if (images.length) {
+    mask = new Uint8Array(width * height);
+    for (const [rx, ry, rw, rh] of images) {
+      const x0 = Math.max(0, Math.floor(rx)), x1 = Math.min(width, Math.ceil(rx + rw));
+      for (let y = Math.max(0, Math.floor(ry)), y1 = Math.min(height, Math.ceil(ry + rh)); y < y1; y++) mask.fill(1, y * width + x0, y * width + x1);
+    }
+  }
+  const [mr, mg, mb] = DARK_MAP as [Uint8Array, Uint8Array, Uint8Array];
+  for (let p = 0, i = 0, n = width * height; p < n; p++, i += 4) {
+    const r = src[i]!, g = src[i + 1]!, b = src[i + 2]!;
+    if (mask && mask[p]) continue;
+    const hi = r > g ? (r > b ? r : b) : g > b ? g : b;
+    const lo = r < g ? (r < b ? r : b) : g < b ? g : b;
+    const chroma = hi - lo;
+    if (chroma >= 48) {
+      out[i] = DIM[r]!;
+      out[i + 1] = DIM[g]!;
+      out[i + 2] = DIM[b]!;
+      continue;
+    }
+    const l = (r * 77 + g * 150 + b * 29) >> 8; // 0..255
+    const w = 1 - chroma / 48;
+    out[i] = DIM[r]! + (mr[l]! - DIM[r]!) * w;
+    out[i + 1] = DIM[g]! + (mg[l]! - DIM[g]!) * w;
+    out[i + 2] = DIM[b]! + (mb[l]! - DIM[b]!) * w;
+  }
+  return out;
 }
 
 const CSS = `
@@ -120,8 +184,15 @@ const CSS = `
 .fr-ann{margin:6px;padding:6px 8px;border-radius:6px;border:1px solid var(--fr-border);border-inline-start:4px solid var(--c);cursor:default}
 .fr-ann:hover{background:var(--fr-hover)}
 .fr-ann .fr-ann-meta{display:flex;justify-content:space-between;font-size:11px;opacity:.65;margin-bottom:3px}
+.fr-ann[data-external=true]{border-style:dashed;border-inline-start-style:solid;background:repeating-linear-gradient(135deg,transparent 0 7px,color-mix(in srgb,CanvasText 4%,transparent) 7px 14px)}
+.fr-ann .fr-ann-badge{display:inline-flex;align-items:center;gap:3px;margin-inline-start:6px;padding:0 5px;border:1px solid var(--fr-border);border-radius:9px;font-size:10px;opacity:.85}
 .fr-ann .fr-ann-text{margin:2px 0}
 .fr-ann .fr-ann-comment{margin-top:4px;font-style:italic}
+.fr-ann[data-selected=true][data-external=true]{box-shadow:inset 0 0 0 1px var(--c)}
+.fr-ann[data-selected=true]{background:var(--fr-active);border-color:var(--c)}
+.fr-ann textarea{display:block;box-sizing:border-box;width:100%;min-height:54px;margin-top:6px;resize:vertical;font:inherit;border:1px solid var(--fr-border);border-radius:5px;background:var(--fr-bg);color:inherit;padding:4px}
+.fr-ann .fr-ann-add{margin-top:4px;color:AccentColor;opacity:.9}
+.fr-swatch{width:14px;height:14px;border-radius:50%;flex:none;margin:0 1px}
 .fr-empty{padding:16px;opacity:.6;text-align:center}
 .fr-outline ul{list-style:none;margin:0;padding-inline-start:14px}
 .fr-outline>ul{padding-inline-start:6px}
@@ -139,10 +210,41 @@ const CSS = `
 .fr-ov .fr-o-selection{background:rgba(51,118,240,.35)}
 .fr-ov .fr-o-highlight{opacity:.4;mix-blend-mode:multiply}
 .fr-ov .fr-o-underline{border-bottom:2px solid var(--c);height:0 !important}
+.fr-ov .fr-o-focus{--c:AccentColor;border-radius:6px;outline:2px solid var(--c);outline-offset:0;overflow:visible;
+  box-shadow:0 0 0 1px rgba(255,255,255,.85),0 0 0 5px color-mix(in srgb,var(--c) 30%,transparent),0 3px 14px rgba(0,0,0,.28);z-index:5}
+.fr-ov .fr-o-focus[data-external=true]{outline-style:dashed;outline-width:2px;box-shadow:0 0 0 1px rgba(255,255,255,.85),0 0 0 5px color-mix(in srgb,var(--c) 18%,transparent),0 3px 14px rgba(0,0,0,.22)}
+.fr-ov .fr-o-focus[data-pulse=true]{animation:fr-focus-pulse .9s ease-out 1}
+.fr-focus-tag{position:absolute;left:-2px;bottom:calc(100% + 8px);white-space:nowrap;padding:1px 7px;border-radius:9px;font-size:10px;font-weight:600;background:#2f333d;color:#e8ebf1;box-shadow:0 1px 4px rgba(0,0,0,.35)}
+@keyframes fr-focus-pulse{0%{box-shadow:0 0 0 1px rgba(255,255,255,.85),0 0 0 0 color-mix(in srgb,var(--c) 70%,transparent),0 3px 14px rgba(0,0,0,.28)}100%{box-shadow:0 0 0 1px rgba(255,255,255,.85),0 0 0 22px color-mix(in srgb,var(--c) 0%,transparent),0 3px 14px rgba(0,0,0,.28)}}
+.fr-ov .fr-o-image{border:2px solid var(--c);background:color-mix(in srgb,var(--c) 14%,transparent)}
+.fr-ov .fr-o-area{border:1.5px dashed AccentColor;background:color-mix(in srgb,AccentColor 15%,transparent)}
+.fr-figs{padding:6px}
+.fr-figs-save{width:100%;gap:6px;border:1px solid var(--fr-border);margin-bottom:2px}
+.fr-fig-page{display:flex;align-items:center;gap:8px;margin:10px 0 6px;font-size:11px;opacity:.7}
+.fr-fig-page::before,.fr-fig-page::after{content:"";flex:1;border-top:1px solid var(--fr-border)}
+.fr-fig{display:block;width:100%;border:1px solid var(--fr-border);border-radius:4px;background:#fff;overflow:hidden;cursor:default;margin-bottom:6px;box-sizing:border-box}
+.fr-fig:hover{outline:2px solid color-mix(in srgb,AccentColor 60%,transparent)}
+.fr-fig img{display:block;width:100%;height:100%;object-fit:contain}
+.fr-prev{display:block;max-width:min(580px,80vw);max-height:60vh;overflow:auto}
+.fr-prev-h{font-size:11px;font-weight:600;opacity:.7;padding:2px 4px 4px}
+.fr-prev img{display:block;max-width:100%;background:#fff;border-radius:3px}
+.fr-cite-list{width:360px;max-width:80vw;max-height:260px;overflow:auto}
+.fr-cite{display:flex;gap:8px;padding:5px 7px;border-radius:5px;font-size:12px;line-height:1.35;cursor:default}
+.fr-cite:hover{background:var(--fr-hover)}
+.fr-cite-n{flex:none;min-width:1.6em;max-width:9em;font-weight:600;opacity:.65;text-align:end}
+.fr-ann img{display:block;max-width:100%;margin:4px 0;border-radius:3px}
+.fr-brand{display:inline-flex;align-items:center;gap:5px;padding:0 6px 0 2px;opacity:.85;font-weight:600;font-size:12px;cursor:default}
 .fr-ov .fr-o-note{border-radius:3px 3px 3px 0;box-shadow:0 1px 3px rgba(0,0,0,.4);opacity:.95;border:1px solid rgba(0,0,0,.35)}
 .fr-root[data-theme=dark] .fr-ov .fr-o-highlight{mix-blend-mode:screen;opacity:.55}
-.fr-root[data-theme=dark] .fr-page canvas{filter:invert(1) hue-rotate(180deg)}
-.fr-root[data-theme=dark] .fr-page{background:#111}
+.fr-root[data-theme=dark]{--fr-stage:#262932}
+/* Zotero's "dark": slate pages; the bitmap is recolored per pixel (see darken()), so photos keep their colors. */
+.fr-root[data-theme=dark] .fr-page{background:#2f333d}
+.fr-root[data-theme=dark] .fr-ov .fr-o-highlight{mix-blend-mode:screen;opacity:.5}
+/* Zotero's "black": the whole page inverted, which also inverts photos. */
+.fr-root[data-theme=black]{--fr-stage:#111}
+.fr-root[data-theme=black] .fr-ov .fr-o-highlight{mix-blend-mode:screen;opacity:.55}
+.fr-root[data-theme=black] .fr-page canvas{filter:invert(1) hue-rotate(180deg)}
+.fr-root[data-theme=black] .fr-page{background:#000}
 .fr-root[data-theme=sepia] .fr-page canvas{filter:sepia(.55) saturate(.9) brightness(.97)}
 .fr-root[data-theme=sepia] .fr-page{background:#f4ecd8}
 .fr-msg{position:absolute;inset:34px 0 0;display:flex;align-items:center;justify-content:center;text-align:center;padding:2em;white-space:pre-wrap;pointer-events:none;opacity:.8}
@@ -233,9 +335,14 @@ export class ReaderView {
 
     // ---- toolbar (mirrors Zotero's reader: sidebar/navigation/zoom left, tools centre, find + view right)
     const bar = el("div", "fr-bar", undefined, this.root);
+    const brand = el("span", "fr-brand", undefined, bar);
+    brand.title = "Zotero Glide: a fast reader plugin for Zotero";
+    brand.append(createGlideMark(doc, 16), doc.createTextNode("Glide"));
     const left = el("div", "fr-grp", undefined, bar);
     btn("panel-left", "Toggle sidebar", () => ev.toggleSidebar(), left);
     el("span", "fr-sep", undefined, left);
+    this.backBtn = btn("arrow-left", "Go back (Alt+Left / ⌘[)", () => ev.back(), left);
+    this.backBtn.disabled = true;
     btn("chevron-left", "Previous page", () => ev.prevPage(), left);
     this.pageInput = el("input", "fr-page-input", undefined, left);
     this.pageInput.type = "text";
@@ -259,7 +366,7 @@ export class ReaderView {
 
     el("span", "fr-grow", undefined, bar);
     const mid = el("div", "fr-grp", undefined, bar);
-    const tool = (id: "highlight" | "underline" | "note", icon: IconName, title: string) => {
+    const tool = (id: "highlight" | "underline" | "note" | "image", icon: IconName, title: string) => {
       const b = btn(icon, title, () => ev.setTool(b.getAttribute("aria-pressed") === "true" ? null : id), mid);
       b.setAttribute("aria-pressed", "false");
       this.toolButtons.set(id, b);
@@ -267,6 +374,7 @@ export class ReaderView {
     tool("highlight", "highlighter", "Highlight text");
     tool("underline", "underline", "Underline text");
     tool("note", "sticky-note", "Add note");
+    tool("image", "image", "Select area");
     const colorBtn = el("button", "fr-btn", undefined, mid);
     colorBtn.title = "Annotation color";
     this.colorDot = el("span", "fr-color-dot", undefined, colorBtn);
@@ -309,6 +417,7 @@ export class ReaderView {
     sideTab("thumbnails", "layout-grid", "Thumbnails");
     sideTab("annotations", "message-square", "Annotations");
     sideTab("outline", "list", "Outline");
+    sideTab("images", "image", "Images");
     this.sideBody = el("div", "fr-side-body", undefined, side);
     this.sideBody.addEventListener("scroll", () => ev.sidebarScrolled());
 
@@ -318,6 +427,8 @@ export class ReaderView {
     this.readingArticle = el("article", undefined, undefined, this.reading);
 
     this.popup = el("div", "fr-popup", undefined, this.root);
+    this.popup.addEventListener("mouseenter", () => (this.popupOver = true));
+    this.popup.addEventListener("mouseleave", () => (this.popupOver = false));
     this.message = el("div", "fr-msg", "Opening…", this.root);
 
     // ---- events
@@ -334,7 +445,7 @@ export class ReaderView {
       { passive: false }
     );
     const pointer = (type: PagePointer["type"]) => (e: MouseEvent) =>
-      ev.pointer({ type, clientX: e.clientX, clientY: e.clientY, shiftKey: e.shiftKey, detail: e.detail, button: e.button });
+      ev.pointer({ type, clientX: e.clientX, clientY: e.clientY, shiftKey: e.shiftKey, detail: e.detail, button: e.button, preventDefault: () => e.preventDefault() });
     this.pagesEl.addEventListener("mousedown", (e) => {
       this.focus();
       this.hidePopups();
@@ -343,6 +454,7 @@ export class ReaderView {
     this.pagesEl.addEventListener("mousemove", pointer("move"));
     this.pagesEl.addEventListener("mouseleave", pointer("leave"));
     this.pagesEl.addEventListener("dblclick", pointer("dblclick"));
+    this.pagesEl.addEventListener("contextmenu", pointer("contextmenu"));
     this.win.addEventListener("mouseup", pointer("up"));
     this.root.addEventListener("mousedown", (e) => {
       if (!(e.target as Element).closest?.(".fr-popup")) this.hidePopups();
@@ -372,8 +484,28 @@ export class ReaderView {
     this.message.textContent = text ?? "";
     this.message.style.display = text ? "flex" : "none";
   }
+  private themeSetting: PageTheme = "light";
+  private themeMql: MediaQueryList | null = null;
+  private readonly onSchemeChange = (): void => this.applyTheme();
   setTheme(theme: PageTheme): void {
-    this.root.dataset.theme = theme;
+    this.themeSetting = theme;
+    if (!this.themeMql) {
+      this.themeMql = this.win.matchMedia?.("(prefers-color-scheme: dark)") ?? null;
+      this.themeMql?.addEventListener("change", this.onSchemeChange);
+    }
+    this.applyTheme();
+  }
+  private applyTheme(): void {
+    const before = this.root.dataset.theme;
+    const now = this.themeSetting === "auto" ? (this.themeMql?.matches ? "dark" : "light") : this.themeSetting;
+    this.root.dataset.theme = now;
+    if (before !== undefined && (before === "dark") !== (now === "dark")) this.ev.themeChanged();
+  }
+  get themeNow(): string | undefined {
+    return this.root.dataset.theme;
+  }
+  private get pixelDark(): boolean {
+    return this.root.dataset.theme === "dark";
   }
   setPageInfo(page: number, total: number): void {
     if (this.doc.activeElement !== this.pageInput) this.pageInput.value = String(page);
@@ -384,7 +516,7 @@ export class ReaderView {
   }
   setTool(tool: Tool): void {
     for (const [id, b] of this.toolButtons) b.setAttribute("aria-pressed", String(id === tool));
-    this.scroller.style.cursor = tool === "note" ? "crosshair" : "";
+    this.scroller.style.cursor = tool === "note" || tool === "image" ? "crosshair" : "";
   }
   setColor(hex: string): void {
     this.colorDot.style.background = hex;
@@ -458,7 +590,7 @@ export class ReaderView {
     }
   }
 
-  /** Positions every page box from a layout (px). Pages are centred horizontally. */
+  /** Positions every page box from a layout (px). Rows of pages are centred horizontally. */
   applyLayout(layout: Layout): void {
     const width = Math.max(this.scroller.clientWidth, layout.maxWidth + 16);
     this.pagesEl.style.width = `${width}px`;
@@ -466,7 +598,7 @@ export class ReaderView {
     for (let i = 0; i < this.pageEls.length; i++) {
       const s = this.pageEls[i]!.style;
       s.top = `${layout.tops[i]}px`;
-      s.left = `${(width - layout.widths[i]!) / 2}px`;
+      s.left = `${(width - layout.maxWidth) / 2 + layout.lefts[i]!}px`;
       s.width = `${layout.widths[i]}px`;
       s.height = `${layout.heights[i]}px`;
     }
@@ -481,7 +613,8 @@ export class ReaderView {
     return el ? Number(el.dataset.page) : null;
   }
 
-  drawFrame(page: number, rgba: Uint8Array, width: number, height: number): void {
+  /** `images`: where the page's raster images are, in bitmap pixels (kept as they are in dark mode). */
+  drawFrame(page: number, rgba: Uint8Array, width: number, height: number, images: Rect[] = []): void {
     const canvas = this.canvases[page];
     if (!canvas) return;
     canvas.width = width;
@@ -489,7 +622,8 @@ export class ReaderView {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     const ImageDataCtor = (this.win as unknown as { ImageData: typeof ImageData }).ImageData;
-    ctx.putImageData(new ImageDataCtor(new Uint8ClampedArray(rgba.buffer as ArrayBuffer, rgba.byteOffset, width * height * 4), width, height), 0, 0);
+    const px = new Uint8ClampedArray(rgba.buffer as ArrayBuffer, rgba.byteOffset, width * height * 4);
+    ctx.putImageData(new ImageDataCtor(this.pixelDark ? darken(px, width, height, images) : px, width, height), 0, 0);
   }
 
   /** Frees a page's bitmap (it scrolled far away). The box and its overlays stay. */
@@ -522,11 +656,42 @@ export class ReaderView {
         if (it.kind === "highlight" || it.kind === "note") d.style.background = it.color;
       }
       if (it.key) d.dataset.key = it.key;
+      if (it.kind === "focus") {
+        if (it.external) {
+          d.dataset.external = "true";
+          const tag = this.doc.createElementNS(XHTML, "span") as HTMLElement;
+          tag.className = "fr-focus-tag";
+          tag.textContent = "In PDF \u00b7 read-only";
+          d.append(tag);
+        }
+        if (it.pulse) d.dataset.pulse = "true";
+      }
       if (it.kind === "underline") {
         d.style.top = `${y + h - 1}px`;
       }
       ov.append(d);
     }
+  }
+
+  /** PNG-encodes an RGBA bitmap in the reader's window (Zotero stores area annotations as PNG). */
+  encodePng(rgba: Uint8Array, width: number, height: number): Promise<Blob | null> {
+    const c = this.doc.createElementNS(XHTML, "canvas") as HTMLCanvasElement;
+    c.width = width;
+    c.height = height;
+    const ImageDataCtor = (this.win as unknown as { ImageData: typeof ImageData }).ImageData;
+    c.getContext("2d")?.putImageData(new ImageDataCtor(new Uint8ClampedArray(rgba.slice().buffer as ArrayBuffer), width, height), 0, 0);
+    return new Promise((resolve) => c.toBlob((b) => resolve(b), "image/png"));
+  }
+  /** The bytes behind an object URL made by `blobUrl`. */
+  async urlBytes(url: string): Promise<Uint8Array> {
+    const r = await (this.win as unknown as { fetch: typeof fetch }).fetch(url);
+    return new Uint8Array(await r.arrayBuffer());
+  }
+  revokeUrl(url: string): void {
+    (this.win as unknown as { URL: typeof URL }).URL.revokeObjectURL(url);
+  }
+  blobUrl(blob: Blob): string {
+    return (this.win as unknown as { URL: typeof URL }).URL.createObjectURL(blob);
   }
 
   setCursor(cursor: string): void {
@@ -551,7 +716,67 @@ export class ReaderView {
     this.popup.style.top = `${top}px`;
   }
 
+  private backBtn!: HTMLButtonElement;
+  setCanGoBack(can: boolean): void {
+    this.backBtn.disabled = !can;
+  }
+
+  /** The mouse is over the popup (so a hover popup must not close under it). */
+  popupOver = false;
+
+  /** The reference(s) a citation points to, shown while the mouse rests on it. */
+  showCitationPopup(clientX: number, clientY: number, items: Array<{ label: string; text: string }>, go: (i: number) => void, onMenu: (i: number, x: number, y: number) => void = () => {}): void {
+    this.hidePopups();
+    const list = this.doc.createElementNS(XHTML, "div") as HTMLElement;
+    list.className = "fr-cite-list";
+    items.forEach((it, i) => {
+      const row = this.doc.createElementNS(XHTML, "div") as HTMLElement;
+      row.className = "fr-cite";
+      const n = this.doc.createElementNS(XHTML, "span") as HTMLElement;
+      n.className = "fr-cite-n";
+      n.textContent = it.label;
+      row.append(n, this.doc.createTextNode(it.text || "(reference not found)"));
+      row.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this.hidePopups();
+        go(i);
+      });
+      row.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onMenu(i, e.clientX, e.clientY);
+      });
+      list.append(row);
+    });
+    this.popup.append(list);
+    this.placePopup(clientX, clientY);
+  }
+
+  /** A picture of the figure, table or equation a reference points to; a click goes there. */
+  showPreviewPopup(clientX: number, clientY: number, label: string, url: string, go: () => void): void {
+    this.hidePopups();
+    const box = this.doc.createElementNS(XHTML, "div") as HTMLElement;
+    box.className = "fr-prev";
+    const h = this.doc.createElementNS(XHTML, "div") as HTMLElement;
+    h.className = "fr-prev-h";
+    h.textContent = label;
+    const img = this.doc.createElementNS(XHTML, "img") as HTMLImageElement;
+    img.draggable = false;
+    img.style.cursor = "pointer";
+    img.addEventListener("load", () => this.placePopup(clientX, clientY));
+    img.src = url;
+    box.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this.hidePopups();
+      go();
+    });
+    box.append(h, img);
+    this.popup.append(box);
+    this.placePopup(clientX, clientY);
+  }
+
   hidePopups(): void {
+    this.popupOver = false;
     this.popup.dataset.open = "false";
     this.popup.replaceChildren();
     this.popup.classList.remove("fr-menu");
@@ -655,7 +880,12 @@ export class ReaderView {
       check.className = "fr-check";
       if (it.checked) check.append(createIcon(this.doc, "check", 14));
       b.append(check);
-      if (it.icon) b.append(createIcon(this.doc, it.icon, 15));
+      if (it.swatch) {
+        const dot = this.doc.createElementNS(XHTML, "span") as HTMLElement;
+        dot.className = "fr-swatch";
+        dot.style.background = it.swatch;
+        b.append(dot);
+      } else if (it.icon) b.append(createIcon(this.doc, it.icon, 15));
       b.append(this.doc.createTextNode(it.label));
       b.disabled = !!it.disabled;
       b.addEventListener("click", (e) => {
@@ -668,6 +898,19 @@ export class ReaderView {
     const r = anchor.getBoundingClientRect();
     this.placePopup(r.right - 240, r.bottom);
   }
+
+  /** A context menu at a pointer position. */
+  showMenuAt(x: number, y: number, items: MenuItem[]): void {
+    const probe = this.doc.createElementNS(XHTML, "span") as HTMLElement;
+    probe.getBoundingClientRect = () => new DOMRect(x, y, 0, 0);
+    this.showMenu(probe, items);
+    // showMenu right-aligns to the anchor; re-place at the pointer instead
+    this.placePopup(x, y - 10);
+  }
+
+  /** Marks one sidebar card as the selected (expanded) one. */
+  selectedAnnotation: string | null = null;
+  private focusAnnotationComment = false;
 
   // -------------------------------------------------------------- sidebar
   setSidebarTab(tab: SidebarTab): void {
@@ -719,7 +962,8 @@ export class ReaderView {
     c.width = width;
     c.height = height;
     const ImageDataCtor = (this.win as unknown as { ImageData: typeof ImageData }).ImageData;
-    c.getContext("2d")?.putImageData(new ImageDataCtor(new Uint8ClampedArray(rgba.buffer as ArrayBuffer, rgba.byteOffset, width * height * 4), width, height), 0, 0);
+    const px = new Uint8ClampedArray(rgba.buffer as ArrayBuffer, rgba.byteOffset, width * height * 4);
+    c.getContext("2d")?.putImageData(new ImageDataCtor(this.pixelDark ? darken(px, width, height) : px, width, height), 0, 0);
   }
   hasThumb(page: number): boolean {
     return (this.thumbCanvases[page]?.width ?? 0) > 0;
@@ -737,7 +981,11 @@ export class ReaderView {
   }
 
   renderAnnotations(list: SidebarAnnotation[]): void {
+    const keep = this.sideBody.scrollTop;
     this.sideBody.replaceChildren();
+    this.doc.defaultView?.queueMicrotask(() => {
+      this.sideBody.scrollTop = keep;
+    });
     this.thumbEls = [];
     if (!list.length) {
       const e = this.doc.createElementNS(XHTML, "div") as HTMLElement;
@@ -753,23 +1001,132 @@ export class ReaderView {
       const meta = this.doc.createElementNS(XHTML, "div") as HTMLElement;
       meta.className = "fr-ann-meta";
       meta.textContent = `${a.kind[0]!.toUpperCase()}${a.kind.slice(1)} · page ${a.pageLabel || a.page + 1}`;
+      if (a.external) {
+        card.dataset.external = "true";
+        const badge = this.doc.createElementNS(XHTML, "span") as HTMLElement;
+        badge.className = "fr-ann-badge";
+        badge.title = "Stored inside the PDF file, not in Zotero: read-only";
+        badge.append(createIcon(this.doc, "file-text", 10), this.doc.createTextNode("In PDF"));
+        meta.append(badge);
+      }
       card.append(meta);
+      if (a.image) {
+        const img = this.doc.createElementNS(XHTML, "img") as HTMLImageElement;
+        img.src = a.image;
+        img.draggable = false;
+        card.append(img);
+      }
       if (a.text) {
         const t = this.doc.createElementNS(XHTML, "div") as HTMLElement;
         t.className = "fr-ann-text";
         t.textContent = a.text;
         card.append(t);
       }
-      if (a.comment) {
+      const selected = this.selectedAnnotation === a.key;
+      card.dataset.selected = String(selected);
+      if (a.external) {
+        const who = [a.author, a.comment].filter(Boolean).join(": ");
+        if (who) {
+          const c = this.doc.createElementNS(XHTML, "div") as HTMLElement;
+          c.className = "fr-ann-comment";
+          c.textContent = who;
+          card.append(c);
+        }
+      } else if (selected) {
+        const ta = this.doc.createElementNS(XHTML, "textarea") as HTMLTextAreaElement;
+        ta.placeholder = a.kind === "note" ? "Note text" : "Add comment";
+        ta.value = a.comment;
+        ta.addEventListener("keydown", (e) => e.stopPropagation());
+        ta.addEventListener("click", (e) => e.stopPropagation());
+        ta.addEventListener("blur", () => {
+          if (ta.value !== a.comment) this.ev.commentAnnotation(a.key, ta.value);
+        });
+        card.append(ta);
+        if (this.focusAnnotationComment) this.doc.defaultView?.setTimeout(() => ta.focus(), 0);
+      } else if (a.comment) {
         const c = this.doc.createElementNS(XHTML, "div") as HTMLElement;
         c.className = "fr-ann-comment";
         c.textContent = a.comment;
         card.append(c);
+      } else {
+        const add = this.doc.createElementNS(XHTML, "div") as HTMLElement;
+        add.className = "fr-ann-add";
+        add.textContent = "Add comment";
+        card.append(add);
       }
-      card.addEventListener("click", () => this.ev.jumpToAnnotation(a.key));
+      card.addEventListener("click", () => {
+        this.selectedAnnotation = a.key;
+        if (a.external) {
+          this.renderAnnotations(list);
+          return this.ev.jumpToAnnotation(a.key);
+        }
+        this.focusAnnotationComment = true;
+        this.renderAnnotations(list);
+        this.focusAnnotationComment = false;
+        this.ev.jumpToAnnotation(a.key);
+      });
+      card.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.selectedAnnotation = a.key;
+        this.renderAnnotations(list);
+        this.ev.annotationMenu(a.key, e.clientX, e.clientY);
+      });
       this.sideBody.append(card);
     }
   }
+
+  /** The Images sidebar tab: one placeholder per figure (`aspect` = height/width), grouped under page numbers. */
+  renderFigures(items: Array<{ page: number; aspect: number }>, onClick: (i: number) => void, onMenu: (i: number, x: number, y: number) => void = () => {}, onSaveAll: () => void = () => {}): void {
+    this.sideBody.replaceChildren();
+    this.thumbEls = [];
+    this.figEls = [];
+    if (!items.length) {
+      const e = this.doc.createElementNS(XHTML, "div") as HTMLElement;
+      e.className = "fr-empty";
+      e.textContent = "No images in this document.";
+      this.sideBody.append(e);
+      return;
+    }
+    const wrap = this.doc.createElementNS(XHTML, "div") as HTMLElement;
+    wrap.className = "fr-figs";
+    const saveAll = this.doc.createElementNS(XHTML, "button") as HTMLButtonElement;
+    saveAll.className = "fr-btn fr-figs-save";
+    saveAll.append(createIcon(this.doc, "download", 14), this.doc.createTextNode(`Save all images (${items.length})…`));
+    saveAll.addEventListener("click", onSaveAll);
+    wrap.append(saveAll);
+    let lastPage = -1;
+    items.forEach((it, i) => {
+      if (it.page !== lastPage) {
+        const h = this.doc.createElementNS(XHTML, "div") as HTMLElement;
+        h.className = "fr-fig-page";
+        h.textContent = String(it.page + 1);
+        wrap.append(h);
+        lastPage = it.page;
+      }
+      const f = this.doc.createElementNS(XHTML, "div") as HTMLElement;
+      f.className = "fr-fig";
+      f.style.aspectRatio = String(1 / Math.max(0.05, it.aspect));
+      f.addEventListener("click", () => onClick(i));
+      f.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onMenu(i, e.clientX, e.clientY);
+      });
+      wrap.append(f);
+      this.figEls.push(f);
+    });
+    this.sideBody.append(wrap);
+  }
+  setFigureImage(i: number, url: string): void {
+    const f = this.figEls[i];
+    if (!f) return;
+    const img = this.doc.createElementNS(XHTML, "img") as HTMLImageElement;
+    img.src = url;
+    img.draggable = false;
+    f.replaceChildren(img);
+  }
+  private figEls: HTMLElement[] = [];
 
   renderOutline(items: OutlineNode[]): void {
     this.sideBody.replaceChildren();
@@ -862,6 +1219,7 @@ export class ReaderView {
   }
 
   dispose(): void {
+    this.themeMql?.removeEventListener("change", this.onSchemeChange);
     this.resizeObserver?.disconnect();
     if (this.resizeTimer !== null) this.win.clearTimeout(this.resizeTimer);
     this.clearAllPages();

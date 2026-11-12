@@ -48,3 +48,9 @@ test("unrelated modified keys are left to Zotero/the browser", () => {
   assert.equal(keyToAction(key("a"), mac), null);
   assert.deepEqual(keyToAction(key("Escape"), mac), { type: "escape" });
 });
+
+test("Alt+Left (and Cmd+[ on a Mac) go back; plain Left still turns the page", () => {
+  assert.deepEqual(keyToAction(key("ArrowLeft", { altKey: true }), { isMac: false }), { type: "back" });
+  assert.deepEqual(keyToAction(key("[", { metaKey: true }), { isMac: true }), { type: "back" });
+  assert.deepEqual(keyToAction(key("ArrowLeft"), { isMac: false }), { type: "prev" });
+});

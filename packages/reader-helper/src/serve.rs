@@ -15,6 +15,8 @@
 //!   {"cmd":"search","query":"..."}    every hit in the document, as rectangles per page
 //!   {"cmd":"outline"}                 the document outline
 //!   {"cmd":"links","page":P}          internal and external links on a page
+//!   {"cmd":"annots","page":P}         annotations stored in the PDF file on a page (read-only)
+//!   {"cmd":"images","page":P}         rectangles of the raster images on a page (dark mode leaves them as they are)
 //!   {"cmd":"margins"}                 uniform white-margin insets, sampled over the document
 //!   {"cmd":"export","path":"...","annotations":[{"page","kind","rects","color","contents"}]}
 //!   {"cmd":"trim"}                    drop page memory and the open document (tab went to background)
@@ -24,7 +26,7 @@
 //!   {"event":"ready","pageCount":N,"pages":[{"w","h","m":[a,b,c,d,e,f]}]}   m: PDF space -> page space
 //!   {"event":"frame","id","page","scale","width","height","path"}          raw opaque RGBA8 in a file
 //!   {"event":"skipped","id"}          a render superseded by a later one for the same page in the same batch
-//!   {"event":"text",...} {"event":"search",...} {"event":"outline",...} {"event":"links",...}
+//!   {"event":"text",...} {"event":"search",...} {"event":"outline",...} {"event":"links",...} {"event":"images","page","rects":[[x,y,w,h]]} {"event":"annots","page","items":[{"k","r","c","t","a","x"}]}
 //!   {"event":"margins","insets":[l,t,r,b]|null} {"event":"exported","path","count"}
 //!   {"event":"error","message":"...","cmd":"..."}
 //!
@@ -62,6 +64,8 @@ pub enum Command {
     Search(String),
     Outline,
     Links(u32),
+    Images(u32),
+    Annots(u32),
     Margins,
     Export { path: PathBuf, annotations: Vec<ExportAnnotation> },
     Trim,
@@ -118,6 +122,8 @@ pub fn parse_command(line: &str) -> Result<Command, String> {
         "search" => Command::Search(s("query")?),
         "outline" => Command::Outline,
         "links" => Command::Links(u("page")?),
+        "images" => Command::Images(u("page")?),
+        "annots" => Command::Annots(u("page")?),
         "margins" => Command::Margins,
         "export" => {
             let mut annotations = Vec::new();
@@ -261,7 +267,7 @@ impl<E: DocumentEngine> Server<E> {
             },
             Command::Text(page) => match self.engine.page_text(page) {
                 Ok(t) => {
-                    let lines: Vec<Value> = t.lines.iter().map(|l| json!({"b": l.bbox, "t": l.text, "x": l.xs})).collect();
+                    let lines: Vec<Value> = t.lines.iter().map(|l| json!({"b": l.bbox, "t": l.text, "x": l.xs, "s": l.sup})).collect();
                     (vec![json!({"event": "text", "page": page, "lines": lines})], false)
                 }
                 Err(e) => (vec![err("text", e.to_string())], false),
@@ -294,9 +300,20 @@ impl<E: DocumentEngine> Server<E> {
                 Ok(items) => (vec![json!({"event": "outline", "items": Self::outline_json(&items)})], false),
                 Err(e) => (vec![err("outline", e.to_string())], false),
             },
+            Command::Annots(page) => match self.engine.embedded_annotations(page) {
+                Ok(list) => {
+                    let items: Vec<Value> = list.iter().map(|a| json!({"k": a.kind, "r": a.rects, "c": a.color, "t": a.contents, "a": a.author, "x": a.text})).collect();
+                    (vec![json!({"event": "annots", "page": page, "items": items})], false)
+                }
+                Err(e) => (vec![err("annots", e.to_string())], false),
+            },
+            Command::Images(page) => match self.engine.image_rects(page) {
+                Ok(r) => (vec![json!({"event": "images", "page": page, "rects": r})], false),
+                Err(e) => (vec![err("images", e.to_string())], false),
+            },
             Command::Links(page) => match self.engine.links(page) {
                 Ok(l) => {
-                    let links: Vec<Value> = l.iter().map(|x| json!({"r": x.rect, "p": x.page, "u": x.uri})).collect();
+                    let links: Vec<Value> = l.iter().map(|x| json!({"r": x.rect, "p": x.page, "u": x.uri, "d": x.dest_at})).collect();
                     (vec![json!({"event": "links", "page": page, "links": links})], false)
                 }
                 Err(e) => (vec![err("links", e.to_string())], false),

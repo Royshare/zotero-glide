@@ -51,6 +51,41 @@ pub struct TextLine {
     pub bbox: [f32; 4],
     pub text: String,
     pub xs: Vec<f32>,
+    /// Runs of superscript digits (citation markers like `7`, `9-11`), as `[from, to)` code-point indexes into `text`.
+    pub sup: Vec<[u32; 2]>,
+}
+
+/// Superscript digit runs in a line: characters set clearly smaller than the line's text that are digits or the
+/// `,` `-` en-dash between them. A run starts and ends on a digit (an exponent like m-1 is not a citation).
+pub fn superscript_runs(chars: &[(char, f32)]) -> Vec<[u32; 2]> {
+    let max = chars.iter().map(|c| c.1).fold(0.0f32, f32::max);
+    let small = |i: usize| chars[i].1 < max * 0.82;
+    let ok = |c: char| c.is_ascii_digit() || matches!(c, ',' | '-' | '\u{2013}' | '\u{2212}' | '\u{2009}');
+    let dash = |c: char| matches!(c, '-' | '\u{2013}' | '\u{2212}');
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < chars.len() {
+        if !(small(i) && ok(chars[i].0)) {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < chars.len() && small(i) && ok(chars[i].0) {
+            i += 1;
+        }
+        let (mut a, mut b) = (start, i);
+        while a < b && !chars[a].0.is_ascii_digit() {
+            a += 1;
+        }
+        while b > a && !chars[b - 1].0.is_ascii_digit() {
+            b -= 1;
+        }
+        let negative = start < a && dash(chars[start].0);
+        if a < b && !negative {
+            out.push([a as u32, b as u32]);
+        }
+    }
+    out
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -74,6 +109,8 @@ pub struct LinkInfo {
     pub page: Option<u32>,
     /// External URI, if any.
     pub uri: Option<String>,
+    /// Where on the destination page the link points: `[left, top]` in PDF space (y up), when the file says.
+    pub dest_at: Option<[f32; 2]>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -91,6 +128,20 @@ pub struct ExportAnnotation {
     pub rects: Vec<[f32; 4]>,
     pub color: [f32; 3],
     pub contents: String,
+}
+
+/// An annotation stored inside the PDF file itself (made by another reader, or by "Export with annotations").
+#[derive(Debug, Clone, PartialEq)]
+pub struct EmbeddedAnnotation {
+    /// highlight | underline | note | text | ink
+    pub kind: &'static str,
+    /// `[x, y, w, h]` in page space
+    pub rects: Vec<[f32; 4]>,
+    pub color: Option<[f32; 3]>,
+    pub contents: String,
+    pub author: String,
+    /// the page text under a highlight/underline
+    pub text: String,
 }
 
 #[derive(Debug)]
@@ -145,6 +196,14 @@ pub trait DocumentEngine: Sized {
     fn page_text(&self, page: u32) -> Result<PageText, EngineError>;
     fn outline(&self) -> Result<Vec<OutlineItem>, EngineError>;
     fn links(&self, page: u32) -> Result<Vec<LinkInfo>, EngineError>;
+    /// The annotations stored in the PDF file on a page (read-only; Zotero's own live in its database).
+    fn embedded_annotations(&self, _page: u32) -> Result<Vec<EmbeddedAnnotation>, EngineError> {
+        Ok(Vec::new())
+    }
+    /// Where raster images are painted on the page, `[x, y, w, h]` in page space (the host's dark mode leaves them alone).
+    fn image_rects(&mut self, _page: u32) -> Result<Vec<[f32; 4]>, EngineError> {
+        Ok(Vec::new())
+    }
     /// Bounding box of everything painted on the page, `[x0, y0, x1, y1]` in page space (None: blank).
     fn content_bbox(&mut self, page: u32) -> Result<Option<[f32; 4]>, EngineError>;
     /// Writes a copy of the document with `annots` embedded; returns how many were embedded.
@@ -439,8 +498,10 @@ pub mod mupdf_engine {
                         let mut text = String::new();
                         let mut xs: Vec<f32> = Vec::new();
                         let mut last_end = 0.0f32;
+                        let mut sized: Vec<(char, f32)> = Vec::new();
                         for ch in line.chars() {
                             let Some(c) = ch.char() else { continue };
+                            sized.push((c, ch.size()));
                             let q = ch.quad();
                             let x0 = q.ul.x.min(q.ll.x).min(q.ur.x).min(q.lr.x);
                             let x1 = q.ul.x.max(q.ll.x).max(q.ur.x).max(q.lr.x);
@@ -453,7 +514,7 @@ pub mod mupdf_engine {
                         }
                         xs.push(last_end);
                         let b = line.bounds();
-                        lines.push(TextLine { bbox: [b.x0, b.y0, b.width(), b.height()], text, xs });
+                        lines.push(TextLine { bbox: [b.x0, b.y0, b.width(), b.height()], text, xs, sup: superscript_runs(&sized) });
                     }
                 }
                 Ok(PageText { lines })
@@ -469,9 +530,51 @@ pub mod mupdf_engine {
                     children: o.down.iter().map(convert).collect(),
                 }
             }
-            self.with_doc(|doc| {
+            let existing: Vec<OutlineItem> = self.with_doc(|doc| {
                 let outlines = doc.outlines().map_err(other)?;
                 Ok(outlines.iter().map(convert).collect())
+            })?;
+            if !existing.is_empty() {
+                return Ok(existing);
+            }
+            // no outline in the file: find the headings from the type, as Zotero's reader does
+            self.with_doc(|doc| {
+                let pages = doc.page_count().map_err(other)?.min(100);
+                let mut lines = Vec::new();
+                for pi in 0..pages {
+                    let p = doc.load_page(pi).map_err(other)?;
+                    let tp = p.to_text_page(TextPageFlags::empty()).map_err(other)?;
+                    for block in tp.blocks() {
+                        if block.r#type() != TextBlockType::Text {
+                            continue;
+                        }
+                        for line in block.lines() {
+                            let mut text = String::new();
+                            let mut font = String::new();
+                            let mut size = 0.0f32;
+                            let mut uniform = true;
+                            for ch in line.chars() {
+                                let Some(c) = ch.char() else { continue };
+                                text.push(c);
+                                if c.is_whitespace() {
+                                    continue;
+                                }
+                                let name = ch.font().map(|f| crate::headings::family_name(f.name())).unwrap_or_default();
+                                if font.is_empty() {
+                                    font = name;
+                                    size = ch.size();
+                                } else if font != name && c.is_alphabetic() {
+                                    uniform = false; // (a dash or digit from a fallback font does not make a line mixed)
+                                }
+                            }
+                            if font.is_empty() || text.trim().is_empty() {
+                                continue;
+                            }
+                            lines.push(crate::headings::RawLine { page: pi as u32, text, font, size, y: line.bounds().y0, x0: line.bounds().x0, x1: line.bounds().x1, uniform });
+                        }
+                    }
+                }
+                Ok(crate::headings::extract_outline(&lines))
             })
         }
 
@@ -487,10 +590,129 @@ pub mod mupdf_engine {
                     if dest_page.is_none() && uri.is_none() {
                         continue;
                     }
-                    out.push(LinkInfo { rect: [b.x0, b.y0, b.width(), b.height()], page: dest_page, uri });
+                    let dest_at = link.dest.and_then(|d| match d.kind {
+                        mupdf::destination::DestinationKind::XYZ { left, top: Some(top), .. } => Some([left.unwrap_or(0.0), top]),
+                        mupdf::destination::DestinationKind::FitH { top: Some(top) } => Some([0.0, top]),
+                        _ => None,
+                    });
+                    out.push(LinkInfo { rect: [b.x0, b.y0, b.width(), b.height()], page: dest_page, uri, dest_at });
                 }
                 Ok(out)
             })
+        }
+
+        fn embedded_annotations(&self, page: u32) -> Result<Vec<EmbeddedAnnotation>, EngineError> {
+            use mupdf::pdf::{PdfAnnotationType as T, PdfPage};
+            self.check_bounds(page)?;
+            self.with_doc(|doc| {
+                let p = doc.load_page(page as i32).map_err(other)?;
+                let Ok(pp) = PdfPage::try_from(p.clone()) else { return Ok(Vec::new()) };
+                let mut out = Vec::new();
+                let mut text_page = None;
+                for a in pp.annotations() {
+                    let Ok(t) = a.r#type() else { continue };
+                    let kind = match t {
+                        T::Highlight => "highlight",
+                        T::Underline | T::Squiggly | T::StrikeOut => "underline",
+                        T::Text => "note",
+                        T::FreeText => "text",
+                        T::Ink | T::Square | T::Circle | T::Line | T::Polygon | T::PolyLine | T::Stamp | T::Caret => "ink",
+                        _ => continue,
+                    };
+                    let boxes = |r: mupdf::Rect| [r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0];
+                    let rects: Vec<[f32; 4]> = if matches!(kind, "highlight" | "underline") {
+                        a.quads().unwrap_or_default().iter().map(|q| {
+                            let xs = [q.ul.x, q.ur.x, q.ll.x, q.lr.x];
+                            let ys = [q.ul.y, q.ur.y, q.ll.y, q.lr.y];
+                            let x0 = xs.iter().cloned().fold(f32::MAX, f32::min);
+                            let y0 = ys.iter().cloned().fold(f32::MAX, f32::min);
+                            [x0, y0, xs.iter().cloned().fold(f32::MIN, f32::max) - x0, ys.iter().cloned().fold(f32::MIN, f32::max) - y0]
+                        }).collect()
+                    } else {
+                        a.bounds().map(|r| vec![boxes(r)]).unwrap_or_default()
+                    };
+                    if rects.is_empty() {
+                        continue;
+                    }
+                    let color = a.color().ok().flatten().map(|c| match c {
+                        mupdf::color::AnnotationColor::Gray(g) => [g, g, g],
+                        mupdf::color::AnnotationColor::Rgb { red, green, blue } => [red, green, blue],
+                        mupdf::color::AnnotationColor::Cmyk { cyan, magenta, yellow, key } => [(1.0 - cyan) * (1.0 - key), (1.0 - magenta) * (1.0 - key), (1.0 - yellow) * (1.0 - key)],
+                    });
+                    let mut text = String::new();
+                    if matches!(kind, "highlight" | "underline") {
+                        if text_page.is_none() {
+                            text_page = p.to_text_page(TextPageFlags::empty()).ok();
+                        }
+                        if let Some(tp) = &text_page {
+                            for block in tp.blocks() {
+                                if block.r#type() != TextBlockType::Text {
+                                    continue;
+                                }
+                                for line in block.lines() {
+                                    let mut piece = String::new();
+                                    for ch in line.chars() {
+                                        let Some(c) = ch.char() else { continue };
+                                        let q = ch.quad();
+                                        let (cx, cy) = ((q.ul.x + q.lr.x) / 2.0, (q.ul.y + q.lr.y) / 2.0);
+                                        if rects.iter().any(|r| cx >= r[0] && cx <= r[0] + r[2] && cy >= r[1] && cy <= r[1] + r[3]) {
+                                            piece.push(c);
+                                        }
+                                    }
+                                    if !piece.is_empty() {
+                                        if !text.is_empty() {
+                                            text.push(' ');
+                                        }
+                                        text.push_str(piece.trim());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    out.push(EmbeddedAnnotation {
+                        kind,
+                        rects,
+                        color,
+                        contents: a.contents().ok().flatten().unwrap_or("").to_string(),
+                        author: a.author().ok().flatten().unwrap_or("").to_string(),
+                        text,
+                    });
+                }
+                Ok(out)
+            })
+        }
+
+        fn image_rects(&mut self, page: u32) -> Result<Vec<[f32; 4]>, EngineError> {
+            use mupdf::{Device, Matrix, Rect};
+            use mupdf::device::NativeDevice;
+            use std::{cell::RefCell, rc::Rc};
+            struct Recorder(Rc<RefCell<Vec<[f32; 4]>>>);
+            impl NativeDevice for Recorder {
+                fn fill_image(&mut self, _img: &mupdf::Image, cmt: Matrix, _alpha: f32, _cp: mupdf::ColorParams) {
+                    // an image fills the unit square transformed by `cmt`
+                    let pts = [cmt.transform_xy(0.0, 0.0), cmt.transform_xy(1.0, 0.0), cmt.transform_xy(0.0, 1.0), cmt.transform_xy(1.0, 1.0)];
+                    let x0 = pts.iter().map(|p| p.0).fold(f32::MAX, f32::min);
+                    let y0 = pts.iter().map(|p| p.1).fold(f32::MAX, f32::min);
+                    let x1 = pts.iter().map(|p| p.0).fold(f32::MIN, f32::max);
+                    let y1 = pts.iter().map(|p| p.1).fold(f32::MIN, f32::max);
+                    if x1 - x0 >= 4.0 && y1 - y0 >= 4.0 {
+                        self.0.borrow_mut().push([x0, y0, x1 - x0, y1 - y0]);
+                    }
+                }
+            }
+            self.check_bounds(page)?;
+            let found = Rc::new(RefCell::new(Vec::new()));
+            let device = Device::from_native(Recorder(found.clone())).map_err(|e| EngineError::Other(e.to_string()))?;
+            let list = self.display_list_for(page)?;
+            list.run(&device, &Matrix::IDENTITY, Rect::INF).map_err(|e| EngineError::Other(e.to_string()))?;
+            drop(device);
+            let out = found.borrow().clone();
+            // scanning a whole scanned book for pictures would otherwise pile its decoded page images up in MuPDF's store
+            self.renders_since_open += 1;
+            if self.renders_since_open >= FLUSH_EVERY_RENDERS {
+                self.release_caches();
+            }
+            Ok(out)
         }
 
         fn content_bbox(&mut self, page: u32) -> Result<Option<[f32; 4]>, EngineError> {
@@ -697,6 +919,16 @@ mod tests {
     }
 
     #[test]
+    fn superscript_runs_find_citation_numbers_only() {
+        let line = |s: &str, small: &[usize]| -> Vec<(char, f32)> { s.chars().enumerate().map(|(i, c)| (c, if small.contains(&i) { 6.0 } else { 9.0 })).collect() };
+        assert_eq!(superscript_runs(&line("manner.4", &[7])), vec![[7, 8]]);
+        assert_eq!(superscript_runs(&line("yeast7\u{2013}9 and", &[5, 6, 7])), vec![[5, 8]]);
+        assert_eq!(superscript_runs(&line("bacteria,7,10,11", &[9, 10, 11, 12, 13, 14, 15])), vec![[9, 16]]);
+        assert!(superscript_runs(&line("m\u{2013}1", &[1, 2])).is_empty(), "a negative exponent is not a citation");
+        assert!(superscript_runs(&line("page 12", &[])).is_empty(), "full-size digits are not superscripts");
+    }
+
+    #[test]
     fn outline_has_titles_destinations_and_nesting() {
         let (e, path) = std_engine("outline");
         let o = e.outline().unwrap();
@@ -775,6 +1007,26 @@ mod tests {
         let i = ((cy * r.width + cx) * 4) as usize;
         let (pr, pg, pb) = crate::frame::over_white(r.rgba[i], r.rgba[i + 1], r.rgba[i + 2], r.rgba[i + 3]);
         assert!(pr > 200 && pg > 150 && pb < 200, "expected yellow highlight at the line, got ({pr},{pg},{pb})");
+        std::fs::remove_dir_all(path.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn embedded_annotations_come_back_with_geometry_color_text_and_contents() {
+        let (e, path) = std_engine("embedded");
+        let t = e.page_text(0).unwrap();
+        let line = t.lines.iter().find(|l| l.text.contains("Hello world")).unwrap().bbox;
+        let out = path.parent().unwrap().join("emb.pdf");
+        e.export_annotated(&out, &[ExportAnnotation { page: 0, kind: ExportKind::Highlight, rects: vec![line], color: [1.0, 0.0, 0.0], contents: "why".into() }]).unwrap();
+        assert!(e.embedded_annotations(0).unwrap().is_empty(), "the original has none");
+        let re = MuPdfDocumentEngine::open(&out).unwrap();
+        let a = re.embedded_annotations(0).unwrap();
+        assert_eq!(a.len(), 1);
+        assert_eq!(a[0].kind, "highlight");
+        assert_eq!(a[0].contents, "why");
+        assert!(a[0].text.contains("Hello world"), "text under the highlight: {:?}", a[0].text);
+        let r = a[0].rects[0];
+        assert!((r[0] - line[0]).abs() < 2.0 && (r[1] - line[1]).abs() < 2.0, "rect {r:?} vs line {line:?}");
+        assert!(a[0].color.unwrap()[0] > 0.9);
         std::fs::remove_dir_all(path.parent().unwrap()).ok();
     }
 

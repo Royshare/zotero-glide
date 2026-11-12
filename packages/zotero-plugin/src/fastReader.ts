@@ -445,6 +445,18 @@ class FastReaderPlugin {
   private _hostActions(att: ZItem, pdfPath: string): HostActions {
     return {
       copyText: (text) => Zotero.Utilities.Internal.copyTextToClipboard(text),
+      copyImage: (png) => {
+        // the same route Zotero's own reader uses for "Copy Image": decode, then put it on the clipboard as a native image
+        const C = Components as unknown as { classes: Record<string, { getService(i: unknown): any; createInstance(i: unknown): any }>; interfaces: Record<string, unknown> };
+        const imgTools = C.classes["@mozilla.org/image/tools;1"]!.getService(C.interfaces.imgITools);
+        const transferable = C.classes["@mozilla.org/widget/transferable;1"]!.createInstance(C.interfaces.nsITransferable);
+        const clipboard = C.classes["@mozilla.org/widget/clipboard;1"]!.getService(C.interfaces.nsIClipboard);
+        const img = imgTools.decodeImageFromArrayBuffer(png.slice().buffer, "image/png");
+        transferable.init(null);
+        transferable.addDataFlavor("application/x-moz-nativeimage");
+        transferable.setTransferData("application/x-moz-nativeimage", img);
+        clipboard.setData(transferable, null, (C.interfaces.nsIClipboard as { kGlobalClipboard: number }).kGlobalClipboard);
+      },
       openURL: (uri) => Zotero.launchURL(uri),
       openInZoteroReader: (pageIndex) => {
         this._bypassReaderPatch = true;
@@ -469,6 +481,28 @@ class FastReaderPlugin {
         fp.appendFilter("PDF", "*.pdf");
         const rv: number = await new Promise((resolve) => fp.open(resolve));
         return rv === fp.returnOK || rv === fp.returnReplace ? (fp.file?.path ?? null) : null;
+      },
+      saveImageAs: async (png, defaultName) => {
+        const fp = (Components.classes as unknown as Record<string, { createInstance(iid: unknown): any }>)["@mozilla.org/filepicker;1"]!.createInstance(Components.interfaces.nsIFilePicker);
+        fp.init((Zotero.getMainWindow() as unknown as { browsingContext: unknown }).browsingContext, "Save image as", fp.modeSave);
+        fp.defaultString = defaultName;
+        fp.appendFilter("PNG", "*.png");
+        const rv: number = await new Promise((resolve) => fp.open(resolve));
+        if (rv !== fp.returnOK && rv !== fp.returnReplace) return false;
+        let path: string = fp.file.path;
+        if (!/\.png$/i.test(path)) path += ".png";
+        await IOUtils.write(path, png);
+        return true;
+      },
+      chooseFolder: async () => {
+        const fp = (Components.classes as unknown as Record<string, { createInstance(iid: unknown): any }>)["@mozilla.org/filepicker;1"]!.createInstance(Components.interfaces.nsIFilePicker);
+        fp.init((Zotero.getMainWindow() as unknown as { browsingContext: unknown }).browsingContext, "Save all images to", fp.modeGetFolder);
+        const rv: number = await new Promise((resolve) => fp.open(resolve));
+        return rv === fp.returnOK ? (fp.file?.path ?? null) : null;
+      },
+      writeImage: async (folder, name, png) => {
+        const path = (PathUtils as unknown as { join(...p: string[]): string }).join(folder, name);
+        await IOUtils.write(path, png);
       },
       openExternally: () => Zotero.launchFile(pdfPath),
       notify: (m) => this._notify(m),

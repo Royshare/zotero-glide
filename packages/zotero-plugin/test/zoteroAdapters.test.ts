@@ -47,7 +47,7 @@ test("readerLocation understands the locations Zotero passes when opening a PDF"
 test("annotationToRecord keeps highlight/underline/note and skips what this reader can't draw", () => {
   const base = { key: "K1", annotationType: "highlight", annotationColor: "#ff6666", annotationText: "t", annotationComment: "c", annotationPageLabel: "3", annotationSortIndex: "00002|000010|00100", annotationPosition: '{"pageIndex":2,"rects":[[1,2,3,4]]}' };
   assert.deepEqual(annotationToRecord(base), { key: "K1", kind: "highlight", color: "#ff6666", text: "t", comment: "c", pageIndex: 2, pageLabel: "3", sortIndex: "00002|000010|00100", rects: [[1, 2, 3, 4]] });
-  assert.equal(annotationToRecord({ ...base, annotationType: "image" }), null);
+  assert.equal(annotationToRecord({ ...base, annotationType: "ink" }), null);
   assert.equal(annotationToRecord({ ...base, annotationType: "ink" }), null);
   assert.equal(annotationToRecord({ ...base, annotationPosition: '{"pageIndex":2,"paths":[[1,2]]}' }), null);
   assert.equal(annotationToRecord({ ...base, annotationPosition: "garbage" }), null);

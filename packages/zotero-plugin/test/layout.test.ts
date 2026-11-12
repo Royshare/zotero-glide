@@ -131,3 +131,37 @@ test("fit-width against the reference page is a fixed point: relaying out never 
     close(fitScale("width", pages[referencePage(pages, DEFAULT_VIEW)]!, DEFAULT_VIEW, 1000, 700, 24), scale);
   }
 });
+
+test("spread groups follow odd / even conventions", async () => {
+  const { spreadGroups } = await import("../src/layout.ts");
+  assert.deepEqual(spreadGroups(5, "none"), [[0], [1], [2], [3], [4]]);
+  assert.deepEqual(spreadGroups(5, "odd"), [[0, 1], [2, 3], [4]]);
+  assert.deepEqual(spreadGroups(5, "even"), [[0], [1, 2], [3, 4]]);
+  assert.deepEqual(spreadGroups(0, "even"), []);
+});
+
+test("odd spreads put two pages side by side, centred as one block", () => {
+  const pages = [page(100, 200), page(100, 200), page(100, 200)];
+  const l = computeLayout(pages, DEFAULT_VIEW, 1, 8, 8, { scroll: "vertical", spread: "odd" });
+  assert.equal(l.tops[0], l.tops[1]);
+  assert.ok(l.tops[2]! > l.tops[1]!);
+  assert.equal(l.lefts[1]! - l.lefts[0]!, 108);
+  assert.equal(l.maxWidth, 208);
+  assert.equal(l.lefts[2], 54); // lone last page is centred
+  assert.equal(pageAtOffset(l, l.tops[1]! + 5), 0); // a row reports its first page
+});
+
+test("wrapped scrolling packs as many pages per row as fit", () => {
+  const pages = Array.from({ length: 5 }, () => page(100, 100));
+  const l = computeLayout(pages, DEFAULT_VIEW, 1, 8, 8, { scroll: "wrapped", spread: "none" }, 340);
+  // 324 usable: 3 per row (316), then 2
+  assert.deepEqual(l.tops.map((t) => t === l.tops[0]), [true, true, true, false, false]);
+  assert.equal(l.tops[3], l.tops[4]);
+  const [a, b] = visibleRange(l, 0, 50, 0);
+  assert.deepEqual([a, b], [0, 2]);
+});
+
+test("fit width accounts for the columns of a spread", () => {
+  const s = fitScale("width", page(100, 100), DEFAULT_VIEW, 424, 1000, 16, 2, 8);
+  close(s, 2);
+});

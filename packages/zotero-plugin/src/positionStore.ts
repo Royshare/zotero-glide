@@ -8,6 +8,7 @@
  */
 
 import type { Rotation } from "./protocol.ts";
+import type { ScrollMode, SpreadMode } from "./layout.ts";
 
 export interface SavedPosition {
   page: number;
@@ -16,6 +17,9 @@ export interface SavedPosition {
   zoom: { mode: "width" | "page" } | { mode: "fixed"; scale: number };
   rotation: Rotation;
   insets: [number, number, number, number] | null;
+  /** page arrangement; absent in entries saved before it existed */
+  scroll?: ScrollMode;
+  spread?: SpreadMode;
 }
 
 interface Entry extends SavedPosition {
