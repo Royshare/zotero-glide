@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Zotero Fast Reader contributors
+
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { citationsInLine, findReferenceStart, parseNumberList, parseReferences } from "../src/citations.ts";
