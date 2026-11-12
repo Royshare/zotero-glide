@@ -1,0 +1,2 @@
+# Bash requires LF line endings, including on Windows with core.autocrlf=true.
+*.sh text eol=lf

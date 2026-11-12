@@ -31,6 +31,7 @@ export function parseSettings(raw: string | undefined): GlobalSettings {
   return {
     theme: (THEMES as readonly unknown[]).includes(v.theme) ? (v.theme as GlobalSettings["theme"]) : d.theme,
     sidebarOpen: typeof v.sidebarOpen === "boolean" ? v.sidebarOpen : d.sidebarOpen,
+    sidebarWidth: typeof v.sidebarWidth === "number" && Number.isFinite(v.sidebarWidth) ? Math.min(600, Math.max(180, v.sidebarWidth)) : d.sidebarWidth,
     sidebarTab: (TABS as readonly unknown[]).includes(v.sidebarTab) ? (v.sidebarTab as GlobalSettings["sidebarTab"]) : d.sidebarTab,
     readingFontSize: typeof v.readingFontSize === "number" && Number.isFinite(v.readingFontSize) ? Math.min(32, Math.max(12, v.readingFontSize)) : d.readingFontSize,
     color: typeof v.color === "string" && /^#[0-9a-f]{6}$/i.test(v.color) ? v.color : d.color,

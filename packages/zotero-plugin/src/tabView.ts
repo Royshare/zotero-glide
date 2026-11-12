@@ -92,6 +92,7 @@ export interface ViewEvents {
   searchCleared(): void;
   openMenu(anchor: HTMLElement): void;
   sidebarTab(tab: SidebarTab): void;
+  sidebarResized(width: number): void;
   sidebarScrolled(): void;
   jumpToPage(page: number): void;
   jumpToAnnotation(key: string): void;
@@ -172,8 +173,9 @@ const CSS = `
 .fr-find .fr-count{opacity:.65;font-size:11px;white-space:nowrap;padding:0 2px}
 .fr-color-dot{width:14px;height:14px;border-radius:50%;border:1px solid color-mix(in srgb,CanvasText 35%,transparent)}
 .fr-main{display:flex;flex:1;min-height:0}
-.fr-side{width:236px;flex:none;display:none;flex-direction:column;border-inline-end:1px solid var(--fr-border);min-height:0}
+.fr-side{width:var(--fr-sidebar-width,236px);flex:none;display:none;flex-direction:column;border-inline-end:1px solid var(--fr-border);min-height:0;position:relative}
 .fr-root[data-sidebar=open] .fr-side{display:flex}
+.fr-side-resize{position:absolute;z-index:2;inset-block:0;inset-inline-end:-4px;width:8px;cursor:ew-resize;touch-action:none}
 .fr-side-tabs{display:flex;gap:2px;padding:4px;border-bottom:1px solid var(--fr-border)}
 .fr-side-tabs .fr-btn{flex:1}
 .fr-side-body{flex:1;overflow:auto;min-height:0;position:relative}
@@ -186,7 +188,7 @@ const CSS = `
 .fr-ann .fr-ann-meta{display:flex;justify-content:space-between;font-size:11px;opacity:.65;margin-bottom:3px}
 .fr-ann[data-external=true]{border-style:dashed;border-inline-start-style:solid;background:repeating-linear-gradient(135deg,transparent 0 7px,color-mix(in srgb,CanvasText 4%,transparent) 7px 14px)}
 .fr-ann .fr-ann-badge{display:inline-flex;align-items:center;gap:3px;margin-inline-start:6px;padding:0 5px;border:1px solid var(--fr-border);border-radius:9px;font-size:10px;opacity:.85}
-.fr-ann .fr-ann-text{margin:2px 0}
+.fr-ann .fr-ann-text{margin:2px 0;overflow-wrap:anywhere;white-space:pre-wrap}
 .fr-ann .fr-ann-comment{margin-top:4px;font-style:italic}
 .fr-ann[data-selected=true][data-external=true]{box-shadow:inset 0 0 0 1px var(--c)}
 .fr-ann[data-selected=true]{background:var(--fr-active);border-color:var(--c)}
@@ -200,8 +202,8 @@ const CSS = `
 .fr-outline li>div:hover{background:var(--fr-hover)}
 .fr-twisty{width:14px;opacity:.7;text-align:center;flex:none}
 .fr-scroller{position:relative;flex:1;min-width:0;overflow:auto;background:var(--fr-stage);scrollbar-gutter:stable}
-.fr-pages{position:relative;min-width:100%}
-.fr-page{position:absolute;background:#fff;box-shadow:0 1px 5px rgba(0,0,0,.4);user-select:none;-moz-user-select:none;cursor:text}
+.fr-pages{position:relative;min-width:100%;cursor:text}
+.fr-page{position:absolute;background:#fff;box-shadow:0 1px 5px rgba(0,0,0,.4);user-select:none;-moz-user-select:none;cursor:inherit}
 .fr-page canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
 .fr-ov{position:absolute;inset:0;pointer-events:none;overflow:hidden}
 .fr-ov>div{position:absolute;box-sizing:border-box}
@@ -219,7 +221,6 @@ const CSS = `
 .fr-ov .fr-o-image{border:2px solid var(--c);background:color-mix(in srgb,var(--c) 14%,transparent)}
 .fr-ov .fr-o-area{border:1.5px dashed AccentColor;background:color-mix(in srgb,AccentColor 15%,transparent)}
 .fr-figs{padding:6px}
-.fr-figs-save{width:100%;gap:6px;border:1px solid var(--fr-border);margin-bottom:2px}
 .fr-fig-page{display:flex;align-items:center;gap:8px;margin:10px 0 6px;font-size:11px;opacity:.7}
 .fr-fig-page::before,.fr-fig-page::after{content:"";flex:1;border-top:1px solid var(--fr-border)}
 .fr-fig{display:block;width:100%;border:1px solid var(--fr-border);border-radius:4px;background:#fff;overflow:hidden;cursor:default;margin-bottom:6px;box-sizing:border-box}
@@ -229,7 +230,7 @@ const CSS = `
 .fr-prev-h{font-size:11px;font-weight:600;opacity:.7;padding:2px 4px 4px}
 .fr-prev img{display:block;max-width:100%;background:#fff;border-radius:3px}
 .fr-cite-list{width:360px;max-width:80vw;max-height:260px;overflow:auto}
-.fr-cite{display:flex;gap:8px;padding:5px 7px;border-radius:5px;font-size:12px;line-height:1.35;cursor:default}
+.fr-cite{display:flex;gap:8px;padding:5px 7px;border-radius:5px;font-size:12px;line-height:1.35;cursor:pointer}
 .fr-cite:hover{background:var(--fr-hover)}
 .fr-cite-n{flex:none;min-width:1.6em;max-width:9em;font-weight:600;opacity:.65;text-align:end}
 .fr-ann img{display:block;max-width:100%;margin:4px 0;border-radius:3px}
@@ -420,6 +421,22 @@ export class ReaderView {
     sideTab("images", "image", "Images");
     this.sideBody = el("div", "fr-side-body", undefined, side);
     this.sideBody.addEventListener("scroll", () => ev.sidebarScrolled());
+    const resize = el("div", "fr-side-resize", undefined, side);
+    resize.title = "Drag to resize sidebar";
+    let resizeStartX = 0;
+    let resizeStartWidth = 236;
+    resize.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      resizeStartX = e.clientX;
+      resizeStartWidth = side.getBoundingClientRect().width;
+      resize.setPointerCapture(e.pointerId);
+    });
+    resize.addEventListener("pointermove", (e) => {
+      if (!resize.hasPointerCapture(e.pointerId)) return;
+      const width = Math.min(600, Math.max(180, Math.round(resizeStartWidth + e.clientX - resizeStartX)));
+      side.style.width = `${width}px`;
+      ev.sidebarResized(width);
+    });
 
     this.scroller = el("div", "fr-scroller", undefined, main);
     this.pagesEl = el("div", "fr-pages", undefined, this.scroller);
@@ -516,7 +533,7 @@ export class ReaderView {
   }
   setTool(tool: Tool): void {
     for (const [id, b] of this.toolButtons) b.setAttribute("aria-pressed", String(id === tool));
-    this.scroller.style.cursor = tool === "note" || tool === "image" ? "crosshair" : "";
+    this.setCursor(tool === "note" || tool === "image" ? "crosshair" : "");
   }
   setColor(hex: string): void {
     this.colorDot.style.background = hex;
@@ -529,6 +546,9 @@ export class ReaderView {
   }
   setSidebarOpen(open: boolean): void {
     this.root.dataset.sidebar = open ? "open" : "closed";
+  }
+  setSidebarWidth(width: number): void {
+    this.root.style.setProperty("--fr-sidebar-width", `${Math.min(600, Math.max(180, width))}px`);
   }
   get sidebarOpen(): boolean {
     return this.root.dataset.sidebar === "open";
@@ -703,17 +723,35 @@ export class ReaderView {
   }
 
   // -------------------------------------------------------------- popups & menus
-  private placePopup(x: number, y: number): void {
+  private placePopup(x: number, y: number, box: HTMLElement = this.popup): void {
     const r = this.root.getBoundingClientRect();
-    this.popup.style.left = "0px";
-    this.popup.style.top = "0px";
-    this.popup.dataset.open = "true";
-    const pw = this.popup.offsetWidth;
-    const ph = this.popup.offsetHeight;
+    box.style.left = "0px";
+    box.style.top = "0px";
+    box.dataset.open = "true";
+    const pw = box.offsetWidth;
+    const ph = box.offsetHeight;
     const left = Math.min(Math.max(4, x - r.left), r.width - pw - 4);
     const top = y - r.top + ph + 12 > r.height ? Math.max(4, y - r.top - ph - 8) : y - r.top + 10;
-    this.popup.style.left = `${left}px`;
-    this.popup.style.top = `${top}px`;
+    box.style.left = `${left}px`;
+    box.style.top = `${top}px`;
+  }
+
+  /**
+   * A second popup layer for a context menu opened from inside a hover popup (e.g. right-clicking a
+   * reference in the citation panel), so the panel stays visible under the menu. Created on first use.
+   */
+  private overlayMenuEl?: HTMLElement;
+  private overlayMenu(): HTMLElement {
+    if (!this.overlayMenuEl) {
+      const m = this.doc.createElementNS(XHTML, "div") as HTMLElement;
+      m.className = "fr-popup fr-menu";
+      m.style.zIndex = "21";
+      m.addEventListener("mouseenter", () => (this.popupOver = true));
+      m.addEventListener("mouseleave", () => (this.popupOver = false));
+      this.root.append(m);
+      this.overlayMenuEl = m;
+    }
+    return this.overlayMenuEl;
   }
 
   private backBtn!: HTMLButtonElement;
@@ -780,10 +818,17 @@ export class ReaderView {
     this.popup.dataset.open = "false";
     this.popup.replaceChildren();
     this.popup.classList.remove("fr-menu");
+    this.hideOverlayMenu();
+  }
+
+  private hideOverlayMenu(): void {
+    if (!this.overlayMenuEl) return;
+    this.overlayMenuEl.dataset.open = "false";
+    this.overlayMenuEl.replaceChildren();
   }
 
   get popupOpen(): boolean {
-    return this.popup.dataset.open === "true";
+    return this.popup.dataset.open === "true" || this.overlayMenuEl?.dataset.open === "true";
   }
 
   private colorRow(active: string, onPick: (hex: string) => void): HTMLElement {
@@ -867,12 +912,16 @@ export class ReaderView {
     ta.focus();
   }
 
-  showMenu(anchor: HTMLElement, items: MenuItem[]): void {
-    this.hidePopups();
-    this.popup.classList.add("fr-menu");
+  private renderMenu(items: MenuItem[], box: HTMLElement = this.popup): void {
+    if (box === this.popup) {
+      this.hidePopups();
+      this.popup.classList.add("fr-menu");
+    } else {
+      this.hideOverlayMenu();
+    }
     for (const it of items) {
       if (it.separator) {
-        this.popup.append(this.doc.createElementNS(XHTML, "hr"));
+        box.append(this.doc.createElementNS(XHTML, "hr"));
         continue;
       }
       const b = this.doc.createElementNS(XHTML, "button") as HTMLButtonElement;
@@ -893,19 +942,26 @@ export class ReaderView {
         this.hidePopups();
         it.run?.();
       });
-      this.popup.append(b);
+      box.append(b);
     }
+  }
+
+  showMenu(anchor: HTMLElement, items: MenuItem[]): void {
+    this.renderMenu(items);
     const r = anchor.getBoundingClientRect();
     this.placePopup(r.right - 240, r.bottom);
   }
 
-  /** A context menu at a pointer position. */
-  showMenuAt(x: number, y: number, items: MenuItem[]): void {
-    const probe = this.doc.createElementNS(XHTML, "span") as HTMLElement;
-    probe.getBoundingClientRect = () => new DOMRect(x, y, 0, 0);
-    this.showMenu(probe, items);
-    // showMenu right-aligns to the anchor; re-place at the pointer instead
-    this.placePopup(x, y - 10);
+  /**
+   * A context menu at a pointer position. With `overPopup` the menu opens on its own layer and the
+   * popup under it (e.g. the citation panel) stays open; picking an item or clicking away closes both.
+   */
+  showMenuAt(x: number, y: number, items: MenuItem[], overPopup = false): void {
+    // The plugin runs outside a window global, where DOMRect is unavailable.
+    // Pointer menus can be placed directly without a synthetic DOM anchor.
+    const box = overPopup ? this.overlayMenu() : this.popup;
+    this.renderMenu(items, box);
+    this.placePopup(x, y - 10, box);
   }
 
   /** Marks one sidebar card as the selected (expanded) one. */
@@ -1077,7 +1133,7 @@ export class ReaderView {
   }
 
   /** The Images sidebar tab: one placeholder per figure (`aspect` = height/width), grouped under page numbers. */
-  renderFigures(items: Array<{ page: number; aspect: number }>, onClick: (i: number) => void, onMenu: (i: number, x: number, y: number) => void = () => {}, onSaveAll: () => void = () => {}): void {
+  renderFigures(items: Array<{ page: number; aspect: number }>, onClick: (i: number) => void, onMenu: (i: number, x: number, y: number) => void = () => {}): void {
     this.sideBody.replaceChildren();
     this.thumbEls = [];
     this.figEls = [];
@@ -1090,11 +1146,6 @@ export class ReaderView {
     }
     const wrap = this.doc.createElementNS(XHTML, "div") as HTMLElement;
     wrap.className = "fr-figs";
-    const saveAll = this.doc.createElementNS(XHTML, "button") as HTMLButtonElement;
-    saveAll.className = "fr-btn fr-figs-save";
-    saveAll.append(createIcon(this.doc, "download", 14), this.doc.createTextNode(`Save all images (${items.length})…`));
-    saveAll.addEventListener("click", onSaveAll);
-    wrap.append(saveAll);
     let lastPage = -1;
     items.forEach((it, i) => {
       if (it.page !== lastPage) {

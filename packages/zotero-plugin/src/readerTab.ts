@@ -137,12 +137,13 @@ export interface HostActions {
 export interface GlobalSettings {
   theme: PageTheme;
   sidebarOpen: boolean;
+  sidebarWidth: number;
   sidebarTab: SidebarTab;
   readingFontSize: number;
   color: string;
 }
 
-export const DEFAULT_SETTINGS: GlobalSettings = { theme: "auto", sidebarOpen: false, sidebarTab: "thumbnails", readingFontSize: 17, color: ANNOTATION_COLORS[0]!.hex };
+export const DEFAULT_SETTINGS: GlobalSettings = { theme: "auto", sidebarOpen: false, sidebarWidth: 236, sidebarTab: "thumbnails", readingFontSize: 17, color: ANNOTATION_COLORS[0]!.hex };
 
 export interface ReaderTabDeps {
   tabs: ZoteroTabs;
@@ -308,6 +309,7 @@ export class ReaderTab {
         searchCleared: () => this.clearSearch(),
         openMenu: (anchor) => this.openMenu(anchor),
         sidebarTab: (t) => this.setSidebarTab(t),
+        sidebarResized: (width) => this.d.settings.set({ sidebarWidth: width }),
         sidebarScrolled: () => this.onSidebarScrolled(),
         jumpToPage: (p) => this.goToPage(p),
         jumpToAnnotation: (k) => this.revealAnnotation(k),
@@ -326,6 +328,7 @@ export class ReaderTab {
     this.view.setColor(s.color);
     this.view.setReadingFontSize(s.readingFontSize);
     this.view.setSidebarOpen(s.sidebarOpen);
+    this.view.setSidebarWidth(s.sidebarWidth);
     this.view.setSidebarTab(s.sidebarTab);
     this.view.setMessage("Opening…");
 
@@ -799,7 +802,7 @@ export class ReaderTab {
       ...(/^\[?\d+\]?$/.test(item.label) ? [{ label: "Copy reference with number", icon: "copy" as const, disabled: !item.text, run: () => this.d.host.copyText(`${item.label.replace(/[\[\]]/g, "")}. ${item.text}`) }] : []),
       { separator: true, label: "" },
       { label: "Go to reference", icon: "book-open", run: item.go },
-    ]);
+    ], true); // keep the citation panel open under the menu
   }
 
   /** Where we were before following a link or citation, so "back" can return (like Zotero's own reader). */
@@ -1579,7 +1582,7 @@ export class ReaderTab {
     if (!figs) return;
     this.figureUrlAt.clear();
     for (const u of this.figureUrls.splice(0)) this.view.revokeUrl(u);
-    this.view.renderFigures(figs.map((f) => ({ page: f.page, aspect: f.rect[3] / f.rect[2] })), (i) => this.goToPage(figs[i]!.page), (i, x, y) => this.showFigureMenu(i, figs[i]!.page, x, y), () => void this.saveAllFigures());
+    this.view.renderFigures(figs.map((f) => ({ page: f.page, aspect: f.rect[3] / f.rect[2] })), (i) => this.goToPage(figs[i]!.page), (i, x, y) => this.showFigureMenu(i, figs[i]!.page, x, y));
     void (async () => {
       for (let i = 0; i < figs.length; i++) {
         if (token !== this.figuresToken || this.disposed || this.view.sidebarTabNow !== "images") return;
