@@ -53,8 +53,14 @@ unsupported in v0.1 and reported as an "unsupported platform" error (brief
 
 Install Rust stable for `x86_64-pc-windows-msvc`, Visual Studio C++ Build
 Tools with a Windows SDK, Node.js, and Git for Windows. The npm hooks use
-Git Bash; put its `bin` directory before Windows' WSL `bash.exe` on PATH.
-MuPDF also needs libclang for generating Rust bindings. Either set
+`scripts/prepare-plugin.mjs` to select Git Bash explicitly, so Windows' WSL
+`bash.exe` cannot accidentally build a Linux helper. It also finds Cargo
+on PATH or under `CARGO_HOME` / `%USERPROFILE%\.cargo`, detects the installed
+MSVC PlatformToolset with `vswhere`, and discovers libclang in the local
+build-tools folder, LLVM, Visual Studio LLVM, or PATH. Existing
+`MUPDF_MSVC_PLATFORM_TOOLSET` and `LIBCLANG_PATH` settings take precedence.
+Shell scripts are checked out with LF endings via `.gitattributes`.
+MuPDF needs libclang for generating Rust bindings. Either set
 `LIBCLANG_PATH` to your LLVM installation's `bin` directory, or install
 the standalone DLL locally with Python as below (it is only a build
 dependency and is not included in the XPI).
@@ -62,19 +68,21 @@ dependency and is not included in the XPI).
 Run from the repository root:
 
 ```powershell
-$env:Path = "C:\Program Files\Git\bin;$env:Path"
+# One-time libclang installation, unless LLVM already supplies libclang.dll.
 python -m pip install --target packages/reader-helper/target/build-tools/libclang libclang==18.1.1
-$env:LIBCLANG_PATH = (Resolve-Path packages/reader-helper/target/build-tools/libclang/clang/native).Path
-
-# Match the installed Visual Studio PlatformToolset. This PC uses v145
-# (VS 2026); VS 2022 uses v143. mupdf-sys 0.8.0 otherwise guesses v142
-# for VS 2026 and fails even when the newer compiler is installed.
-$env:MUPDF_MSVC_PLATFORM_TOOLSET = 'v145'
 
 Set-Location packages/zotero-plugin
 npm ci
 npm run build
 ```
+
+The same `npm run build` command works in a fresh PowerShell session without
+editing PATH or setting build variables. Build setup prints the selected
+Windows Cargo, Git Bash, MSVC toolset and libclang paths. If a prerequisite
+is missing, it stops with the corresponding setup instruction before compilation.
+For direct `bash scripts/build-helper.sh` invocations, use Git Bash and set
+`LIBCLANG_PATH` and `MUPDF_MSVC_PLATFORM_TOOLSET` yourself; the automatic
+discovery applies to the npm `build` and `start` hooks.
 
 The result is `packages/zotero-plugin/.scaffold/build/zotero-fast-reader.xpi`,
 containing `bin/windows-x64/fast-reader-helper.exe`. Install it using

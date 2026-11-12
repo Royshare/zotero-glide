@@ -17,9 +17,9 @@
   },
   "scripts": {
     "test": "node --test",
-    "prestart": "bash ../../scripts/build-helper.sh && bash ../../scripts/prepare-legal.sh",
+    "prestart": "node ../../scripts/prepare-plugin.mjs",
     "start": "zotero-plugin serve",
-    "prebuild": "bash ../../scripts/build-helper.sh && bash ../../scripts/prepare-legal.sh",
+    "prebuild": "node ../../scripts/prepare-plugin.mjs",
     "build": "zotero-plugin build && tsc --noEmit",
     "typecheck": "tsc --noEmit",
     "release": "zotero-plugin release"
