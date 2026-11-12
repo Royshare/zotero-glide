@@ -41,7 +41,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: macos-14,       bin_dir: macos-arm64 }
+          - { os: macos-15,      bin_dir: macos-arm64 }
           - { os: macos-15-intel, bin_dir: macos-x64 }
           - { os: windows-latest, bin_dir: windows-x64 }
           # 22.04, not latest: the binary needs glibc >= the build machine's, so build on older.
