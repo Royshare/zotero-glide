@@ -98,3 +98,40 @@ test("toolbar menus still align to their anchor and keep disabled actions", () =
   assert.equal(popup.children[1]!.tagName, "hr");
   assert.equal(label(popup.children[2]!), "Available");
 });
+
+test("right-clicking a reference in the citation panel keeps the panel open under the menu", () => {
+  const { view, popup } = fixture();
+  const actions: string[] = [];
+  view.showCitationPopup(300, 300, [{ label: "[1]", text: "Smith 2020" }, { label: "[2]", text: "Jones 2021" }], () => {}, (i, x, y) => {
+    view.showMenuAt(x, y, [{ label: "Copy reference", run: () => { actions.push(`copy ${i}`); } }], true);
+  });
+  const rows = popup.children[0]!.children;
+  assert.equal(rows.length, 2);
+  rows[1]!.dispatchEvent(Object.assign(new Event("contextmenu", { cancelable: true }), { clientX: 320, clientY: 330 }));
+
+  // the panel is untouched and the menu lives on its own layer above it
+  assert.equal(popup.dataset.open, "true");
+  assert.equal(popup.children.length, 1);
+  assert.equal(popup.children[0]!.children.length, 2);
+  const root = (view as unknown as { root: ElementStub }).root;
+  const menu = root.children[0]!;
+  assert.equal(menu.dataset.open, "true");
+  assert.deepEqual(menu.children.map(label), ["Copy reference"]);
+
+  // choosing an item runs it and closes both
+  menu.children[0]!.dispatchEvent(new Event("click"));
+  assert.deepEqual(actions, ["copy 1"]);
+  assert.equal(view.popupOpen, false);
+  assert.equal(popup.children.length, 0);
+});
+
+test("clearing popups also closes the overlay menu", () => {
+  const { view, popup } = fixture();
+  view.showCitationPopup(300, 300, [{ label: "[1]", text: "Smith 2020" }], () => {}, (_i, x, y) => {
+    view.showMenuAt(x, y, [{ label: "Copy reference" }], true);
+  });
+  popup.children[0]!.children[0]!.dispatchEvent(new Event("contextmenu", { cancelable: true }));
+  assert.equal(view.popupOpen, true);
+  view.hidePopups();
+  assert.equal(view.popupOpen, false);
+});
