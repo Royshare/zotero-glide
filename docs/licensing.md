@@ -111,15 +111,14 @@ MuPDF (or buying Artifex's commercial license -- next section).
   https://www.ijg.org/files/jpegsrc.v9f.tar.gz) is committed as `licenses/libjpeg-ijg-9f-README.txt`, reproduced in
   `THIRD_PARTY_NOTICES.md`, shipped in the source archive, and the acknowledgement appears in the notices, in
   `fast-reader-helper --license`, and in the README.
-- Repository: https://github.com/Royshare/zotero-glide (private). `package.json` and the manifest point at it, and
+- Repository: https://github.com/Royshare/zotero-glide (public). `package.json` and the manifest point at it, and
   the release workflow bakes `github.com/<owner>/<repo>` and the commit into every binary and `legal/SOURCE.md`.
 
-**Still open before a public release:**
-- **The repository is private.** The AGPL source offer must be something recipients can actually obtain. Either make
-  the repository public before distributing binaries, or distribute the source archive (`scripts/make-source-archive.sh`,
-  attached to each release) to the same people as the binaries -- release assets of a private repository are private
-  too, so a link to it is not an offer to anyone who cannot sign in. The manifest's `update_url` has the same
-  limitation: Zotero cannot fetch an update manifest from a private repository.
+**Public repository.** The repository is public, so the AGPL source offer is obtainable by recipients. Each release
+also attaches the complete-corresponding-source archive (`scripts/make-source-archive.sh`). The manifest's `update_url`
+points at the `update.json` attached to the latest release.
+
+**Still open:**
 - Several crates publish no license file; their declared license (listed in the notices) applies, but a counsel
   review may want the texts attached.
 - Icons are inlined Lucide SVG paths (ISC, attribution in the notices).

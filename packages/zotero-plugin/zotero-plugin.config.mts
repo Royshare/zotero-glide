@@ -17,6 +17,19 @@ export default defineConfig({
   id: pkg.config.addonID,
   namespace: pkg.config.addonRef,
 
+  // `npm run release` = pick a version, bump it, commit, tag vX.Y.Z and push. The pushed tag triggers
+  // .github/workflows/release.yml, which builds all platforms and publishes the GitHub release; scaffold's
+  // own GitHub publisher is disabled because it would only package this machine's helper.
+  release: {
+    bumpp: {
+      // manifest.json is hand-authored (makeManifest is off), so its version must be bumped alongside.
+      files: ["package.json", "addon/manifest.json"],
+    },
+    github: {
+      enable: "false",
+    },
+  },
+
   build: {
     // NOT "addon/**/*.*" -- the helper binaries under addon/bin/<platform>/
     // have no file extension (fast-reader-helper, no ".exe" on
