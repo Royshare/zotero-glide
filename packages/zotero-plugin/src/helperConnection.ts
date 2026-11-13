@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Copyright (C) 2026 Zotero Fast Reader contributors
+// Copyright (C) 2026 Zotero Glide contributors
 
 /**
- * Owns one `fast-reader-helper --serve` child process for one reader tab:
+ * Owns one `glide-helper --serve` child process for one reader tab:
  * serialized command writes, an incremental stdout read loop that turns
  * lines into events, and a bounded shutdown (polite `quit`, then kill).
  * The process type is injected (Subprocess.sys.mjs in Zotero, a fake in

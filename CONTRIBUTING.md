@@ -6,7 +6,7 @@ Linux inside Zotero) and focused pull requests are all welcome.
 ## Before you start
 
 - For anything larger than a bug fix, open an issue first so we can agree on the approach.
-- Scope: Fast Reader is a reader tab, not a PDF editor. See "What it is not" in the
+- Scope: Zotero Glide is a reader tab, not a PDF editor. See "What it is not" in the
   [README](README.md) and the [ADRs](docs/adr/). Proposals outside that scope will likely be declined.
 - Annotations and notes must stay in Zotero's own data model; the plugin must not write to
   `zotero.sqlite` directly or patch Zotero's reader internals.

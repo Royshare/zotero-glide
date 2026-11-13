@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Copyright (C) 2026 Zotero Fast Reader contributors
+// Copyright (C) 2026 Zotero Glide contributors
 //
 // Development harness: runs the REAL reader (packages/zotero-plugin/src/readerTab.ts + tabView.ts) in an
 // ordinary browser against the REAL helper binary, with Zotero replaced by in-memory stand-ins, so the UI can
@@ -20,7 +20,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "../..");
 const require = createRequire(path.join(root, "packages/zotero-plugin/package.json"));
 const { build } = require("esbuild");
-const HELPER = process.env.HELPER || path.join(root, "packages/reader-helper/target/release/fast-reader-helper");
+const HELPER = process.env.HELPER || path.join(root, "packages/reader-helper/target/release/glide-helper");
 const PORT = Number(process.env.PORT || 8766);
 
 const sessions = new Map(); // id -> { proc, frameDir, chunks: string[], waiters: [] }
@@ -34,7 +34,7 @@ async function bundle() {
   return out.outputFiles[0].text;
 }
 
-const HTML = `<!doctype html><meta charset=utf-8><title>Fast Reader UI harness</title>
+const HTML = `<!doctype html><meta charset=utf-8><title>Zotero Glide UI harness</title>
 <style>html,body{margin:0;height:100%;font:13px system-ui}#root{height:100vh;width:100vw}#toast{position:fixed;right:12px;bottom:12px;background:#222;color:#fff;padding:8px 12px;border-radius:6px;display:none;max-width:360px;z-index:99}</style>
 <div id=root></div><div id=toast></div><script src="/app.js"></script>`;
 

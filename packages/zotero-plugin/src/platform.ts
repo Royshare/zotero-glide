@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Copyright (C) 2026 Zotero Fast Reader contributors
+// Copyright (C) 2026 Zotero Glide contributors
 
 /**
  * Maps a platform/arch pair to the `bin/<dir>/` name used in
  * docs/cross-platform.md's binary layout. Pure function, no Zotero
  * dependency -- takes plain strings so it's callable identically from
  * Zotero (`Zotero.isMac`/`isWin`/`isLinux` + `Zotero.arch`, mapped by
- * fastReader.ts's `hostPlatform()`) and from Node (`process.platform`/
+ * glide.ts's `hostPlatform()`) and from Node (`process.platform`/
  * `process.arch`) via a small adapter at the call site, and directly
  * from tests.
  */
@@ -35,5 +35,5 @@ export function resolvePlatformDir(platform: string, arch: string): PlatformDir 
 }
 
 export function helperFileName(platformDir: PlatformDir): string {
-  return platformDir.startsWith("windows-") ? "fast-reader-helper.exe" : "fast-reader-helper";
+  return platformDir.startsWith("windows-") ? "glide-helper.exe" : "glide-helper";
 }

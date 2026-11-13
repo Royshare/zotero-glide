@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Copyright (C) 2026 Zotero Fast Reader contributors
+// Copyright (C) 2026 Zotero Glide contributors
 
 //! Small, pragmatic abstraction over the PDF library. GUI and cache code
 //! depend only on this trait -- no `mupdf` types cross the boundary.
@@ -796,7 +796,7 @@ mod tests {
 
     #[test]
     fn invalid_file_is_reported() {
-        let dir = std::env::temp_dir().join("fast-reader-helper-tests");
+        let dir = std::env::temp_dir().join("glide-helper-tests");
         std::fs::create_dir_all(&dir).unwrap();
         let bogus = dir.join("not-a-pdf.pdf");
         std::fs::write(&bogus, b"this is not a pdf").unwrap();
@@ -863,7 +863,7 @@ mod tests {
     fn extract_text_is_nonempty_for_text_page() {
         let engine = MuPdfDocumentEngine::open(&fixture("sample.pdf")).unwrap();
         let text = engine.extract_text(0).unwrap();
-        assert!(text.contains("Fast Reader Test Fixture") || text.contains("page"));
+        assert!(text.contains("Zotero Glide Test Fixture") || text.contains("page"));
     }
 
     // ---- structure tests, against an in-memory PDF with known geometry (see testpdf.rs) ----

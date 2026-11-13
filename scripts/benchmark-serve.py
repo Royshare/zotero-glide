@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 Zotero Fast Reader contributors
-"""Memory/latency benchmark for the in-tab (--serve) mode of fast-reader-helper.
+# Copyright (C) 2026 Zotero Glide contributors
+"""Memory/latency benchmark for the in-tab (--serve) mode of glide-helper.
 
 Drives the real helper binary over its stdio protocol exactly as the Zotero
 tab does: a retina-sized viewport, then 100 page turns, then `trim`.
@@ -9,7 +9,7 @@ Reports phys_footprint (macOS `footprint`, the honest number -- `ps` RSS
 overstates, see docs/benchmark-methodology.md) at each stage, and the
 command->frame latency per page turn.
 
-    python3 scripts/benchmark-serve.py [path/to/fast-reader-helper]
+    python3 scripts/benchmark-serve.py [path/to/glide-helper]
     python3 scripts/benchmark-serve.py --untuned   # without the allocator knob, for comparison
 
 The plugin launches the helper with an allocator knob (macOS MallocSpaceEfficient=1,
@@ -26,7 +26,7 @@ if "--untuned" not in sys.argv:
         ENV["MallocSpaceEfficient"] = "1"
     elif sys.platform.startswith("linux"):
         ENV["MALLOC_MMAP_THRESHOLD_"] = "1048576"
-BIN = args[0] if args else f"{ROOT}/packages/reader-helper/target/release/fast-reader-helper"
+BIN = args[0] if args else f"{ROOT}/packages/reader-helper/target/release/glide-helper"
 FIXTURES = ["paper-a.pdf", "book-b.pdf", "scanned-c.pdf"]
 VIEWPORT = (2068, 1382, 2.0)  # a ~1034x691 CSS-px tab on a retina display
 

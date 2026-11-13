@@ -416,16 +416,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fast-reader-helper"
-version = "0.1.0"
-dependencies = [
- "mupdf",
- "serde_json",
- "softbuffer",
- "winit",
-]
-
-[[package]]
 name = "fastrand"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -519,6 +509,16 @@ dependencies = [
  "cfg-if",
  "libc",
  "r-efi 6.0.0",
+]
+
+[[package]]
+name = "glide-helper"
+version = "0.1.0"
+dependencies = [
+ "mupdf",
+ "serde_json",
+ "softbuffer",
+ "winit",
 ]
 
 [[package]]

@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Copyright (C) 2026 Zotero Fast Reader contributors
+// Copyright (C) 2026 Zotero Glide contributors
 
 /**
  * PDF attachment detection and path resolution, using only the Zotero
  * item API surface confirmed during research (see docs/adr and
- * fastReader.ts's citation comment): `item.isRegularItem()`,
+ * glide.ts's citation comment): `item.isRegularItem()`,
  * `item.isPDFAttachment()`, `item.getBestAttachment()`,
  * `attachment.getFilePathAsync()`. No direct zotero.sqlite access (brief
  * §3/§20 non-goal).
@@ -48,7 +48,7 @@ export function isPdfAttachmentItem(item: PdfLikeItem | null | undefined): boole
 
 /**
  * Given whatever the user right-clicked (a regular item, or an attachment
- * directly), returns the PDF attachment item to open in Fast Reader, or
+ * directly), returns the PDF attachment item to open in Zotero Glide, or
  * `null` if there isn't one. Mirrors the brief §12 "only show/enable it
  * when appropriate" requirement -- this is also what the context-menu
  * `onShowing` visibility check calls.
@@ -70,7 +70,7 @@ export async function resolvePdfAttachment(
  * Resolves the on-disk path for the PDF attachment relevant to `item`
  * (regular item or attachment), or `null` if there is none / the file is
  * missing on disk. Uses `getFilePathAsync()` specifically, not the
- * cache-only sync `getFilePath()` (see fastReader.ts's research citation).
+ * cache-only sync `getFilePath()` (see glide.ts's research citation).
  */
 export async function getPdfPathForItem(item: PdfLikeItem | null | undefined): Promise<string | null> {
   const attachment = await resolvePdfAttachment(item);

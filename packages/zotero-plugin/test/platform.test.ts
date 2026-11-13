@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Copyright (C) 2026 Zotero Fast Reader contributors
+// Copyright (C) 2026 Zotero Glide contributors
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -34,7 +34,7 @@ test("UnsupportedPlatformError carries the platform/arch that failed", () => {
 });
 
 test("helperFileName appends .exe only for windows", () => {
-  assert.equal(helperFileName("windows-x64"), "fast-reader-helper.exe");
-  assert.equal(helperFileName("macos-arm64"), "fast-reader-helper");
-  assert.equal(helperFileName("linux-x64"), "fast-reader-helper");
+  assert.equal(helperFileName("windows-x64"), "glide-helper.exe");
+  assert.equal(helperFileName("macos-arm64"), "glide-helper");
+  assert.equal(helperFileName("linux-x64"), "glide-helper");
 });

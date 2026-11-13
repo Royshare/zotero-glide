@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 Zotero Fast Reader contributors
+# Copyright (C) 2026 Zotero Glide contributors
 #
 # Runs on every push and pull request. NOTE: written without being able to run GitHub
 # Actions locally; every command below was run on macOS arm64, but the Windows and
@@ -61,13 +61,13 @@ jobs:
       # the real helper. The benchmark bin and the examples are still type-checked, which does not link.
       - name: cargo test
         working-directory: packages/reader-helper
-        run: cargo test --release --locked --lib --bin fast-reader-helper
+        run: cargo test --release --locked --lib --bin glide-helper
       - name: cargo build
         # Skipped on Windows (~3 min of MSVC LTCG): the test step links the same code, and the release
         # workflow builds and ships the real binary on every platform.
         if: runner.os != 'Windows'
         working-directory: packages/reader-helper
-        run: cargo build --release --locked --bin fast-reader-helper
+        run: cargo build --release --locked --bin glide-helper
       - name: Benchmark binary and examples still compile
         working-directory: packages/reader-helper
         run: cargo check --release --locked --bins --examples
@@ -77,7 +77,7 @@ jobs:
         # Drives the real binary over its stdio protocol (page turns, trim). Not a pass/fail
         # perf gate -- the numbers go in the log.
         shell: bash
-        run: python3 scripts/benchmark-serve.py packages/reader-helper/target/release/fast-reader-helper*
+        run: python3 scripts/benchmark-serve.py packages/reader-helper/target/release/glide-helper*
 
   plugin:
     name: Plugin (typecheck + tests)

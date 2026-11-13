@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 Zotero Fast Reader contributors
+# Copyright (C) 2026 Zotero Glide contributors
 # Creates (or reuses) an isolated Zotero profile + data directory for
 # developing this plugin, per brief §14: "Do not develop against a user's
 # production Zotero database/profile when avoidable." Everything lives
-# under $PROFILE_DIR (default: ~/.zotero-fast-reader-dev-profile),
+# under $PROFILE_DIR (default: ~/.zotero-glide-dev-profile),
 # completely separate from the real ~/Library/Application Support/Zotero
 # profile -- this script never touches that.
 #
@@ -18,8 +18,8 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PLUGIN_DIR="$ROOT/packages/zotero-plugin/addon"
-PLUGIN_ID="fast-reader@zotero-glide.local"
-PROFILE_DIR="${PROFILE_DIR:-$HOME/.zotero-fast-reader-dev-profile}"
+PLUGIN_ID="glide@zotero-glide.local"
+PROFILE_DIR="${PROFILE_DIR:-$HOME/.zotero-glide-dev-profile}"
 
 mkdir -p "$PROFILE_DIR/extensions"
 printf '%s' "$PLUGIN_DIR" > "$PROFILE_DIR/extensions/$PLUGIN_ID"

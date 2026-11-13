@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 Zotero Fast Reader contributors
+# Copyright (C) 2026 Zotero Glide contributors
 """Generate small, fully synthetic (owned, CC0) PDF fixtures for tests and
 benchmarks. No external PDF libraries required -- writes raw PDF syntax
 directly so the fixtures have no licensing entanglement of their own.
@@ -217,7 +217,7 @@ def make_image_heavy_pdf(path: str, n_pages: int):
 LOREM = (
     "This synthetic paragraph exists only to give the search index and "
     "text layout something real to chew on across the fixture. Zotero "
-    "Fast Reader renders this page with MuPDF, not with Gecko or PDF.js. "
+    "Zotero Glide renders this page with MuPDF, not with Gecko or PDF.js. "
     "The quick brown fox jumps over the lazy dog near the render cache."
 ).split()
 
@@ -242,7 +242,7 @@ def main():
 
     # small fixture for unit tests: 3 pages, deterministic, tiny
     make_text_pdf(
-        os.path.join(fixtures_dir, "sample.pdf"), 3, "Fast Reader Test Fixture",
+        os.path.join(fixtures_dir, "sample.pdf"), 3, "Zotero Glide Test Fixture",
         lambda p: body_lines(p, n_lines=8, words_per_line=8), with_figure=True)
 
     # benchmark Document A: normal academic paper, ~24 pages, vector text + figures

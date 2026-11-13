@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Copyright (C) 2026 Zotero Fast Reader contributors
+// Copyright (C) 2026 Zotero Glide contributors
 
 /// <reference lib="dom" />
 // Browser side of the UI harness (see server.mjs): the real ReaderTab with Zotero stood in by in-memory fakes.

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Copyright (C) 2026 Zotero Fast Reader contributors
+// Copyright (C) 2026 Zotero Glide contributors
 
 // Evaluates an async JS body in Zotero's parent process over the Firefox remote debugging protocol.
 // usage: PORT=63100 node run.mjs 'return Zotero.version'

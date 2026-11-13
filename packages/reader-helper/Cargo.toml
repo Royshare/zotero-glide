@@ -1,9 +1,9 @@
 [package]
-name = "fast-reader-helper"
+name = "glide-helper"
 version = "0.1.0"
 edition = "2024"
 license = "AGPL-3.0-or-later"
-description = "Headless/windowed MuPDF PDF reader process used by the Zotero Fast Reader plugin"
+description = "Headless/windowed MuPDF PDF reader process used by the Zotero Glide plugin"
 publish = false
 
 [dependencies]

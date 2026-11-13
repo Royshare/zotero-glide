@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Copyright (C) 2026 Zotero Fast Reader contributors
+// Copyright (C) 2026 Zotero Glide contributors
 
-use fast_reader_helper::app::{App, DockGeometry};
-use fast_reader_helper::engine::mupdf_engine::MuPdfDocumentEngine;
-use fast_reader_helper::engine::DocumentEngine;
-use fast_reader_helper::log;
-use fast_reader_helper::serve::{self, Server};
-use fast_reader_helper::state::ReaderState;
+use glide_helper::app::{App, DockGeometry};
+use glide_helper::engine::mupdf_engine::MuPdfDocumentEngine;
+use glide_helper::engine::DocumentEngine;
+use glide_helper::log;
+use glide_helper::serve::{self, Server};
+use glide_helper::state::ReaderState;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use winit::event_loop::EventLoop;
@@ -22,7 +22,7 @@ struct Args {
 
 fn parse_args(argv: &[String]) -> Result<Args, String> {
     if argv.is_empty() {
-        return Err("usage: fast-reader-helper <pdf-path> [--page N] [--dock-x X --dock-y Y --dock-height H]\n   or: fast-reader-helper --serve --frame-dir <dir> --file <pdf-path> [--page N]   (headless, JSON over stdio)\n   or: fast-reader-helper --file <pdf-path> [--page N] [--dock-x X --dock-y Y --dock-height H]".into());
+        return Err("usage: glide-helper <pdf-path> [--page N] [--dock-x X --dock-y Y --dock-height H]\n   or: glide-helper --serve --frame-dir <dir> --file <pdf-path> [--page N]   (headless, JSON over stdio)\n   or: glide-helper --file <pdf-path> [--page N] [--dock-x X --dock-y Y --dock-height H]".into());
     }
     let mut file: Option<PathBuf> = None;
     let mut page: u32 = 1;
@@ -104,14 +104,14 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
 fn main() -> ExitCode {
     log::init();
     let argv: Vec<String> = std::env::args().skip(1).collect();
-    if let Some(info) = fast_reader_helper::about::info_for(&argv) {
+    if let Some(info) = glide_helper::about::info_for(&argv) {
         print!("{info}");
         return ExitCode::SUCCESS;
     }
     let args = match parse_args(&argv) {
         Ok(a) => a,
         Err(e) => {
-            eprintln!("[fast-reader] {e}");
+            eprintln!("[glide] {e}");
             return ExitCode::from(2);
         }
     };
@@ -120,7 +120,7 @@ fn main() -> ExitCode {
     let engine = match MuPdfDocumentEngine::open(&args.file) {
         Ok(e) => e,
         Err(e) => {
-            eprintln!("[fast-reader] {e}");
+            eprintln!("[glide] {e}");
             return ExitCode::from(1);
         }
     };
@@ -133,7 +133,7 @@ fn main() -> ExitCode {
         return match serve::run(server, std::io::BufReader::new(stdin), &mut stdout) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
-                eprintln!("[fast-reader] serve error: {e}");
+                eprintln!("[glide] serve error: {e}");
                 ExitCode::from(1)
             }
         };
@@ -145,13 +145,13 @@ fn main() -> ExitCode {
     let event_loop = match EventLoop::new() {
         Ok(el) => el,
         Err(e) => {
-            eprintln!("[fast-reader] failed to create event loop (unsupported platform/display?): {e}");
+            eprintln!("[glide] failed to create event loop (unsupported platform/display?): {e}");
             return ExitCode::from(3);
         }
     };
     let mut app = App::new(engine, state, args.dock);
     if let Err(e) = event_loop.run_app(&mut app) {
-        eprintln!("[fast-reader] event loop error: {e}");
+        eprintln!("[glide] event loop error: {e}");
         return ExitCode::from(1);
     }
     ExitCode::SUCCESS

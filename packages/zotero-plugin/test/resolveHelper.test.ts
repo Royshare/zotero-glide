@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Copyright (C) 2026 Zotero Fast Reader contributors
+// Copyright (C) 2026 Zotero Glide contributors
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -15,9 +15,9 @@ test("resolveHelperPath returns the platform-specific path when the file exists"
     platform: "darwin",
     arch: "arm64",
     pathJoin: fakePathJoin,
-    fileExists: async (p) => p === "/plugin/bin/macos-arm64/fast-reader-helper",
+    fileExists: async (p) => p === "/plugin/bin/macos-arm64/glide-helper",
   });
-  assert.equal(path, "/plugin/bin/macos-arm64/fast-reader-helper");
+  assert.equal(path, "/plugin/bin/macos-arm64/glide-helper");
 });
 
 test("resolveHelperPath works with a synchronous fileExists too", async () => {
@@ -28,7 +28,7 @@ test("resolveHelperPath works with a synchronous fileExists too", async () => {
     pathJoin: fakePathJoin,
     fileExists: (p) => p.endsWith(".exe"),
   });
-  assert.equal(path, "/plugin/bin/windows-x64/fast-reader-helper.exe");
+  assert.equal(path, "/plugin/bin/windows-x64/glide-helper.exe");
 });
 
 test("resolveHelperPath throws HelperMissingError when the binary is absent", async () => {
@@ -57,7 +57,7 @@ test("HelperMissingError names the exact path that was checked", async () => {
     assert.fail("expected throw");
   } catch (e) {
     if (!(e instanceof HelperMissingError)) throw e;
-    assert.equal(e.expectedPath, "/plugin/bin/linux-x64/fast-reader-helper");
+    assert.equal(e.expectedPath, "/plugin/bin/linux-x64/glide-helper");
   }
 });
 

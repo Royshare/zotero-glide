@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Copyright (C) 2026 Zotero Fast Reader contributors
+// Copyright (C) 2026 Zotero Glide contributors
 
 /**
  * One reader *tab* inside Zotero's own tab bar: a `Zotero_Tabs` tab whose content is a `ReaderView`, fed by
- * a per-tab `fast-reader-helper --serve` process. Closing the tab ends the process and the OS reclaims all of
+ * a per-tab `glide-helper --serve` process. Closing the tab ends the process and the OS reclaims all of
  * its memory. Design: docs/adr/002-in-tab-reader.md and 003-continuous-reader.md.
  *
  * This is the reader's brain: continuous-scroll layout, asking the helper for exactly the visible pages,
@@ -45,7 +45,7 @@ interface CiteItem {
 import { ReaderView, type MenuItem, type OverlayItem, type PagePointer, type PageTheme, type SidebarTab, type Tool } from "./tabView.ts";
 
 /** Custom Zotero tab type. NO dash: Zotero splits tab types on "-" (`parseTabType`). */
-export const TAB_TYPE = "fastreader";
+export const TAB_TYPE = "glide";
 
 /** How long a backgrounded tab keeps its pages before trimming them. */
 export const BACKGROUND_TRIM_DELAY_MS = 2000;
@@ -104,7 +104,7 @@ export interface AnnotationRecord {
   author?: string;
 }
 
-/** Zotero-side annotation operations (implemented in fastReader.ts over Zotero.Annotations). */
+/** Zotero-side annotation operations (implemented in glide.ts over Zotero.Annotations). */
 export interface AnnotationBackend {
   list(): AnnotationRecord[];
   create(draft: AnnotationDraft, image?: Blob): Promise<string>;
@@ -404,7 +404,7 @@ export class ReaderTab {
       onOutput: (line) => {
         this.recentOutput.push(line);
         if (this.recentOutput.length > 5) this.recentOutput.shift();
-        deps.debug(`[fast-reader] helper: ${line}`);
+        deps.debug(`[glide] helper: ${line}`);
       },
       onExit: (code, requested) => this.onExit(code, requested),
     });
@@ -508,7 +508,7 @@ export class ReaderTab {
         this.d.host.notify(`Exported ${ev.count} annotation${ev.count === 1 ? "" : "s"} to ${ev.path}`);
         return;
       case "error":
-        this.d.debug(`[fast-reader] helper error${ev.cmd ? ` (${ev.cmd})` : ""}: ${ev.message}`);
+        this.d.debug(`[glide] helper error${ev.cmd ? ` (${ev.cmd})` : ""}: ${ev.message}`);
         return;
     }
   }
@@ -516,7 +516,7 @@ export class ReaderTab {
   private onExit(code: number, requested: boolean): void {
     if (requested || this.disposed) return;
     const detail = this.recentOutput.length ? `\n\n${this.recentOutput.join("\n")}` : "";
-    this.view.setMessage(`The Fast Reader process stopped unexpectedly (exit code ${code}).\nClose this tab and reopen the PDF.${detail}`);
+    this.view.setMessage(`The Zotero Glide process stopped unexpectedly (exit code ${code}).\nClose this tab and reopen the PDF.${detail}`);
   }
 
   // ======================================================================= start-up and layout
@@ -1488,7 +1488,7 @@ export class ReaderTab {
         const key = await this.d.annotations.create(draft);
         firstKey ??= key;
       } catch (e) {
-        this.d.debug(`[fast-reader] could not save annotation: ${e}`);
+        this.d.debug(`[glide] could not save annotation: ${e}`);
         this.d.host.notify("Could not save the annotation.");
       }
     }
@@ -1503,7 +1503,7 @@ export class ReaderTab {
       this.setTool(null);
       this.revealAnnotation(key, true);
     } catch (e) {
-      this.d.debug(`[fast-reader] could not save note: ${e}`);
+      this.d.debug(`[glide] could not save note: ${e}`);
       this.d.host.notify("Could not save the note.");
     }
   }
@@ -1631,7 +1631,7 @@ export class ReaderTab {
         await this.d.host.writeImage(folder, this.figureName(i), png);
         saved++;
       } catch (e) {
-        this.d.debug(`[fast-reader] could not write image: ${e}`);
+        this.d.debug(`[glide] could not write image: ${e}`);
       }
     }
     this.d.host.notify(saved === figs.length ? `Saved ${saved} images.` : `Saved ${saved} of ${figs.length} images.`);
@@ -1682,7 +1682,7 @@ export class ReaderTab {
       this.imageUrls.set(key, this.view.blobUrl(blob));
       this.renderAnnotationList();
     } catch (e) {
-      this.d.debug(`[fast-reader] could not save image annotation: ${e}`);
+      this.d.debug(`[glide] could not save image annotation: ${e}`);
       this.d.host.notify("Could not save the image annotation.");
     }
   }
@@ -1882,7 +1882,7 @@ export class ReaderTab {
     const handle = await this.d.notes
       .mountEditor(this.view.notesEditorHost, id, { onReturn: () => this.closeNote(), onOpenAnnotation: (page) => this.goToPage(page) })
       .catch((e: unknown) => {
-        this.d.debug(`[fast-reader] note editor failed: ${e}`);
+        this.d.debug(`[glide] note editor failed: ${e}`);
         return null;
       });
     if (token !== this.noteToken || this.disposed) {
@@ -2166,7 +2166,7 @@ export class ReaderTab {
     try {
       this.d.positions.save(this.d.positionKey, this.currentPosition());
     } catch (e) {
-      this.d.debug(`[fast-reader] could not save position: ${e}`);
+      this.d.debug(`[glide] could not save position: ${e}`);
     }
   }
 

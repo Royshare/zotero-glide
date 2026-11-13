@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Copyright (C) 2026 Zotero Fast Reader contributors
+// Copyright (C) 2026 Zotero Glide contributors
 
 //! `--version` / `--license`: the helper statically links MuPDF (AGPL-3.0), so
 //! every distributed binary must tell the recipient its license and where to get
 //! the corresponding source. Release builds bake the source location in via
-//! `FAST_READER_SOURCE_URL` / `FAST_READER_SOURCE_COMMIT` (see
+//! `GLIDE_SOURCE_URL` / `GLIDE_SOURCE_COMMIT` (see
 //! scripts/prepare-legal.sh and .github/workflows/release.yml).
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-const SOURCE_URL: Option<&str> = option_env!("FAST_READER_SOURCE_URL");
-const SOURCE_COMMIT: Option<&str> = option_env!("FAST_READER_SOURCE_COMMIT");
+const SOURCE_URL: Option<&str> = option_env!("GLIDE_SOURCE_URL");
+const SOURCE_COMMIT: Option<&str> = option_env!("GLIDE_SOURCE_COMMIT");
 
 fn source_line(url: Option<&str>, commit: Option<&str>) -> String {
     match (url, commit) {
@@ -22,13 +22,13 @@ fn source_line(url: Option<&str>, commit: Option<&str>) -> String {
 }
 
 fn version_text(url: Option<&str>, commit: Option<&str>) -> String {
-    format!("fast-reader-helper {VERSION}\n{}\n", source_line(url, commit))
+    format!("glide-helper {VERSION}\n{}\n", source_line(url, commit))
 }
 
 fn license_text(url: Option<&str>, commit: Option<&str>) -> String {
     format!(
-        "fast-reader-helper {VERSION} -- part of Zotero Fast Reader\n\
-         Copyright (C) 2026 Zotero Fast Reader contributors\n\n\
+        "glide-helper {VERSION} -- part of Zotero Glide\n\
+         Copyright (C) 2026 Zotero Glide contributors\n\n\
          This program is free software: you can redistribute it and/or modify it under the terms of the\n\
          GNU Affero General Public License as published by the Free Software Foundation, either version 3\n\
          of the License, or (at your option) any later version.\n\n\

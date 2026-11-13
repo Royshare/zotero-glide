@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 Zotero Fast Reader contributors
+# Copyright (C) 2026 Zotero Glide contributors
 #
 # Triggered by pushing a tag `vX.Y.Z` (which must equal packages/zotero-plugin/package.json's
 # version). Builds the helper on all four platforms, assembles ONE .xpi containing every
@@ -23,8 +23,8 @@ permissions:
 env:
   # Baked into the binaries (--version/--license) and into legal/SOURCE.md inside the .xpi,
   # so every distributed binary names where its exact source is (AGPL-3.0 section 6).
-  FAST_READER_SOURCE_URL: ${{ github.server_url }}/${{ github.repository }}
-  FAST_READER_SOURCE_COMMIT: ${{ github.sha }}
+  GLIDE_SOURCE_URL: ${{ github.server_url }}/${{ github.repository }}
+  GLIDE_SOURCE_COMMIT: ${{ github.sha }}
 
 jobs:
   helper:
@@ -34,10 +34,10 @@ jobs:
       fail-fast: true
       matrix:
         include:
-          - { os: macos-15,      bin_dir: macos-arm64,  exe: fast-reader-helper }
-          - { os: macos-15-intel, bin_dir: macos-x64,    exe: fast-reader-helper }
-          - { os: windows-latest, bin_dir: windows-x64,  exe: fast-reader-helper.exe }
-          - { os: ubuntu-22.04,   bin_dir: linux-x64,    exe: fast-reader-helper }
+          - { os: macos-15,      bin_dir: macos-arm64,  exe: glide-helper }
+          - { os: macos-15-intel, bin_dir: macos-x64,    exe: glide-helper }
+          - { os: windows-latest, bin_dir: windows-x64,  exe: glide-helper.exe }
+          - { os: ubuntu-22.04,   bin_dir: linux-x64,    exe: glide-helper }
     steps:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
@@ -46,9 +46,9 @@ jobs:
       - run: python3 scripts/gen_fixtures.py
       # only the lib/main test harnesses and the shipped binary are linked (see ci.yml for why: MSVC LTCG per link)
       - working-directory: packages/reader-helper
-        run: cargo test --release --locked --lib --bin fast-reader-helper
+        run: cargo test --release --locked --lib --bin glide-helper
       - working-directory: packages/reader-helper
-        run: cargo build --release --locked --bin fast-reader-helper
+        run: cargo build --release --locked --bin glide-helper
       - uses: actions/upload-artifact@v4
         with:
           name: helper-${{ matrix.bin_dir }}
@@ -86,22 +86,22 @@ jobs:
             mkdir -p "packages/zotero-plugin/addon/bin/$d"
             cp artifacts/helper-$d/* "packages/zotero-plugin/addon/bin/$d/"
           done
-          chmod +x packages/zotero-plugin/addon/bin/*/fast-reader-helper
+          chmod +x packages/zotero-plugin/addon/bin/*/glide-helper
       - name: Build the .xpi (helper already built per platform)
         working-directory: packages/zotero-plugin
         env:
-          FAST_READER_SKIP_HELPER_BUILD: "1"
+          GLIDE_SKIP_HELPER_BUILD: "1"
         run: |
           npm ci
           npm run build
       - name: Corresponding-source archive (project + vendored dependencies incl. MuPDF)
-        run: scripts/make-source-archive.sh "$VERSION" "zotero-fast-reader-$VERSION-source.tar.gz"
+        run: scripts/make-source-archive.sh "$VERSION" "zotero-glide-$VERSION-source.tar.gz"
       - name: Checksums and publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cp packages/zotero-plugin/.scaffold/build/zotero-fast-reader.xpi "zotero-fast-reader-$VERSION.xpi"
-          XPI="zotero-fast-reader-$VERSION.xpi"
+          cp packages/zotero-plugin/.scaffold/build/zotero-glide.xpi "zotero-glide-$VERSION.xpi"
+          XPI="zotero-glide-$VERSION.xpi"
           # Zotero's update manifest (manifest.json's update_url points at the latest release's copy)
           node -e '
             const fs = require("fs");
@@ -110,11 +110,11 @@ jobs:
             const hash = require("crypto").createHash("sha256").update(fs.readFileSync(f)).digest("hex");
             fs.writeFileSync("update.json", JSON.stringify({ addons: { [z.id]: { updates: [{
               version: v,
-              update_link: `${process.env.FAST_READER_SOURCE_URL}/releases/download/v${v}/${f}`,
+              update_link: `${process.env.GLIDE_SOURCE_URL}/releases/download/v${v}/${f}`,
               update_hash: `sha256:${hash}`,
               applications: { zotero: { strict_min_version: z.strict_min_version } },
             }] } } }, null, 2) + "\n");
           ' "$XPI"
-          sha256sum "zotero-fast-reader-$VERSION.xpi" "zotero-fast-reader-$VERSION-source.tar.gz" > SHA256SUMS
-          gh release create "v$VERSION" --generate-notes --title "Zotero Fast Reader $VERSION" \
-            "zotero-fast-reader-$VERSION.xpi" "zotero-fast-reader-$VERSION-source.tar.gz" SHA256SUMS update.json
+          sha256sum "zotero-glide-$VERSION.xpi" "zotero-glide-$VERSION-source.tar.gz" > SHA256SUMS
+          gh release create "v$VERSION" --generate-notes --title "Zotero Glide $VERSION" \
+            "zotero-glide-$VERSION.xpi" "zotero-glide-$VERSION-source.tar.gz" SHA256SUMS update.json

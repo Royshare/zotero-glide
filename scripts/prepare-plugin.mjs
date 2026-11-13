@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Copyright (C) 2026 Zotero Fast Reader contributors
+// Copyright (C) 2026 Zotero Glide contributors
 
 // npm runs in cmd.exe on Windows. A bare `bash` can resolve to WSL even
 // though Node and Cargo are Windows executables. Select Git Bash explicitly
@@ -41,7 +41,7 @@ export function windowsBuildEnvironment(root, sourceEnv = process.env, run = spa
   if (!bash) throw new Error("Git Bash was not found. Install Git for Windows with its command-line tools on PATH; WSL Bash cannot build the Windows helper.");
   paths.unshift(dirname(bash));
 
-  if (!env.FAST_READER_SKIP_HELPER_BUILD) {
+  if (!env.GLIDE_SKIP_HELPER_BUILD) {
     const cargoHome = env.CARGO_HOME || (env.USERPROFILE && join(env.USERPROFILE, ".cargo"));
     if (cargoHome) paths.push(join(cargoHome, "bin"));
     const cargo = executable("cargo.exe", paths);
@@ -89,7 +89,7 @@ export function preparePlugin(root) {
     : { bash: "bash", env: process.env };
   if (process.platform === "win32") {
     console.log(`Windows build shell: ${bash}`);
-    if (!env.FAST_READER_SKIP_HELPER_BUILD) {
+    if (!env.GLIDE_SKIP_HELPER_BUILD) {
       console.log(`Windows Cargo: ${executable("cargo.exe", env.PATH.split(";"))}`);
       console.log(`MSVC toolset: ${env.MUPDF_MSVC_PLATFORM_TOOLSET}; libclang: ${env.LIBCLANG_PATH}`);
     }

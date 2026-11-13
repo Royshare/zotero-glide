@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Copyright (C) 2026 Zotero Fast Reader contributors
+// Copyright (C) 2026 Zotero Glide contributors
 
 //! Minimal debug logging (§17 of the brief). Off by default; enabled with
-//! `FAST_READER_DEBUG=1`. Only ever called from event-driven code paths
+//! `GLIDE_DEBUG=1`. Only ever called from event-driven code paths
 //! (open, navigate, render, cache hit/evict, search, close) -- never from
 //! the idle/redraw-request loop, so an idle reader stays silent.
 
@@ -12,7 +12,7 @@ use std::time::Instant;
 fn enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
     *ENABLED.get_or_init(|| {
-        std::env::var("FAST_READER_DEBUG")
+        std::env::var("GLIDE_DEBUG")
             .map(|v| v != "0" && !v.is_empty())
             .unwrap_or(false)
     })
@@ -32,6 +32,6 @@ pub fn init() {
 
 pub fn debug(msg: &str) {
     if enabled() {
-        eprintln!("[fast-reader] +{}ms {msg}", start_time().elapsed().as_millis());
+        eprintln!("[glide] +{}ms {msg}", start_time().elapsed().as_millis());
     }
 }

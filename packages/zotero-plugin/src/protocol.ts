@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Copyright (C) 2026 Zotero Fast Reader contributors
+// Copyright (C) 2026 Zotero Glide contributors
 
 /**
- * Wire protocol between the reader *tab* and `fast-reader-helper --serve` (authoritative description:
+ * Wire protocol between the reader *tab* and `glide-helper --serve` (authoritative description:
  * packages/reader-helper/src/serve.rs; design: docs/adr/002 and 003). Newline-delimited JSON over the
  * helper's stdin/stdout. Pure -- no Zotero APIs -- so it is unit-tested directly.
  *

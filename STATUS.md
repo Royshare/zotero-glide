@@ -21,16 +21,16 @@ Zotero**: do the live checks listed in the ADR before merging.
 
 ## v0.3: the reader is now a Zotero tab
 
-"Open in Fast Reader" opens the PDF as a tab in Zotero's own tab bar. Design
+"Open in Zotero Glide" opens the PDF as a tab in Zotero's own tab bar. Design
 and rejected alternatives: [`docs/adr/002-in-tab-reader.md`](docs/adr/002-in-tab-reader.md).
-In short: `fast-reader-helper --serve` is a headless per-tab render server
+In short: `glide-helper --serve` is a headless per-tab render server
 (JSON commands on stdin, whole-page RGBA frames written to files); the plugin
 paints them on a `<canvas>` inside a real `Zotero_Tabs` tab. The old window is
-kept as "Open in Fast Reader (separate window)".
+kept as "Open in Zotero Glide (separate window)".
 
 **Verified live** against the isolated dev profile (`Zotero 2.app`, version
 11.0-beta.3, driven over RDP; the user's own Zotero was never touched):
-- the tab appears in the tab bar (`fastreader:<title>`), canvas is 2068x2677 on
+- the tab appears in the tab bar (`glide:<title>`), canvas is 2068x2677 on
   a dpr-2 display, page content read back from the canvas is the right page,
   white background, correct text;
 - real DOM key events: next/prev, Home/End, `+`, fit width/page, go-to-page;
@@ -84,11 +84,11 @@ works as a temporary/dev install, not a real one.)
 **Packed `.xpi` install -- works.** The built `.xpi` installed through the
 real add-on manager (`AddonManager.getInstallForFile().install()`): active,
 compatible, root URI `jar:file:///...xpi!/`. The first tab open extracted the
-helper into the data dir (`fast-reader-helper-bin/`, 6.0 MB, executable); the
+helper into the data dir (`glide-helper-bin/`, 6.0 MB, executable); the
 tab opened, rendered, and the helper process had the allocator env set.
 
 **Restart with a reader tab open -- found and fixed a real bug.** With a
-`fastreader` tab and an ordinary PDF.js reader tab open, quitting Zotero saved
+`glide` tab and an ordinary PDF.js reader tab open, quitting Zotero saved
 both into the session; on relaunch **neither** came back:
 `TypeError: undefined has no properties` at `tabs.js:611`. Zotero calls
 `restoreState[type]` per saved tab, and for a type with no hook it destructures
@@ -98,7 +98,7 @@ plugin can start after the pane has restored). Fix: the plugin wraps
 `Zotero_Tabs.getState()` so its tabs are never saved (`sessionState.ts`, 3
 tests). Re-verified on the final `.xpi`: saved session has only `library` and
 `reader`; after relaunch both restore, 0 errors, no helper process left over.
-Not fixed: a session file *already* containing a `fastreader` tab (only
+Not fixed: a session file *already* containing a `glide` tab (only
 possible from a development build) -- delete that entry from the profile's
 `session.json`.
 
@@ -110,11 +110,11 @@ after the last frame, and after a background trim or close.
 **Memory vs Zotero's PDF.js reader (Zotero 10.0.8, macOS arm64, retina) -- v0.3's single-page view; superseded for the current reader by the v0.4 table above, whose win is smaller.**
 Fresh Zotero launch per run; metric is the summed `phys_footprint` of the
 whole process tree (Zotero, its Gecko children, and our helper), as a delta
-over that run's own baseline. Same Zotero, same PDFs. Fast Reader = the final
+over that run's own baseline. Same Zotero, same PDFs. Zotero Glide = the final
 build; 2 runs per cell (PDF.js: 1-2, three PDF.js repeats were lost to a
 harness error). Medians, MB:
 
-| PDF | PDF.js: open / after 30 turns | Fast Reader: open / after 30 turns | first page |
+| PDF | PDF.js: open / after 30 turns | Zotero Glide: open / after 30 turns | first page |
 |---|---|---|---|
 | 0.3 MB, 8 pp | +463 / +934 | +8 / +322 | 407 ms vs 26 ms |
 | 2.5 MB, 5 pp | +353 / +517 | +25 / +104 | 426 vs 27 |
@@ -122,12 +122,12 @@ harness error). Medians, MB:
 | 4.2 MB, 464 pp | +424 / +638 | -33 / +86 | 373 vs 26 |
 | 5.3 MB, 40 pp, scan | +27 / +688 | -18 / +220 | 384 vs 26 |
 
-A fairer control, because the Fast Reader tab forces GCs and PDF.js does not:
+A fairer control, because the Zotero Glide tab forces GCs and PDF.js does not:
 the same sequence with a forced GC applied to **both** (one run each, after a
 GC'd baseline). 464 pp: PDF.js +312 after 30 turns / +165 once backgrounded,
-Fast Reader +66 / -46. 48 pp: PDF.js +568 / +232, Fast Reader +147 / -102.
+Zotero Glide +66 / -46. 48 pp: PDF.js +568 / +232, Zotero Glide +147 / -102.
 So the advantage survives equal treatment: roughly 3-4x less while reading,
-and the Fast Reader tab gives its memory back when backgrounded while PDF.js
+and the Zotero Glide tab gives its memory back when backgrounded while PDF.js
 keeps ~165-230 MB.
 
 Read these with their limits:
@@ -139,10 +139,10 @@ Read these with their limits:
   renders lazily; its +688 after reading is the real cost.
 - Page-turn latency is **not** compared: PDF.js usually has the page
   pre-rendered, so my probe reads ~0 ms. Where it was a real wait (5-pp
-  paper) PDF.js was 134/268 ms (p50/p95) vs 52-58 ms. Fast Reader end to end
+  paper) PDF.js was 134/268 ms (p50/p95) vs 52-58 ms. Zotero Glide end to end
   (key -> pixels painted in the tab) is 30-76 ms, vs ~12 ms for the helper
   alone: the rest is reading and painting a ~20 MB frame.
-- The scan is the Fast Reader's weak case: the helper alone holds ~214 MB while
+- The scan is the Zotero Glide's weak case: the helper alone holds ~214 MB while
   reading it (MuPDF's decoded-image store), still well under PDF.js's total.
 - Reproduce: `scripts/pdfjs-compare/` (isolated profile required).
 
@@ -185,7 +185,7 @@ After the docked-window build, a real reinstall+relaunch threw
 bugs, this time by *reproducing the exact scenario* rather than just
 reading logs: pre-seeded a fresh test profile's data directory with a
 copy of the actual stale binary found in the real environment
-(`fast-reader-helper-bin/0.1.0/macos-arm64/fast-reader-helper`, dated
+(`glide-helper-bin/0.1.0/macos-arm64/glide-helper`, dated
 well before the dock-args change), then launched through the real
 plugin.
 
@@ -215,8 +215,8 @@ version-based scheme failed to do).
 **Verified against the literal reproduction**: pre-seeded the exact
 known-stale binary at the exact destination path a fresh profile would
 use, installed the fixed plugin, launched a real PDF item through
-`Zotero.FastReader.openInFastReader()`, and confirmed both that the
-stale file's mtime was overwritten and that a real `fast-reader-helper`
+`Zotero.Glide.openInGlide()`, and confirmed both that the
+stale file's mtime was overwritten and that a real `glide-helper`
 process launched successfully with the correct arguments -- no manual
 cleanup of the real environment's stale file needed, since the fix is
 self-healing on next use.
@@ -256,10 +256,10 @@ Both phases from the approved v0.2 plan are done and verified live:
   --test` still runs the `.ts` test files directly -- no ts-node, no
   jest, no babel added. 47 tests. Verified against a real packed `.xpi`
   install (not just `zotero-plugin serve`'s dev path): menu registers
-  correctly, a real `fast-reader-helper` process spawns with correct
+  correctly, a real `glide-helper` process spawns with correct
   arguments.
 - **Docked-window UX** (`packages/reader-helper` + the plugin):
-  `fastReader.ts` reads Zotero's own main window geometry
+  `glide.ts` reads Zotero's own main window geometry
   (`Zotero.getMainWindow()`'s `screenX`/`screenY`/`outerWidth`/
   `outerHeight`) and passes the target position (immediately right of
   Zotero's window, matching its height) to the helper as `--dock-x
@@ -270,8 +270,8 @@ Both phases from the approved v0.2 plan are done and verified live:
   (see the plan: this stays a fully separate, independently-closeable
   process; only its on-screen position/size look integrated). Verified
   live end-to-end: a real click-equivalent call
-  (`Zotero.FastReader.openInFastReader()`) against a real Zotero window
-  produced a real `fast-reader-helper` process whose actual argv
+  (`Zotero.Glide.openInGlide()`) against a real Zotero window
+  produced a real `glide-helper` process whose actual argv
   (checked via `ps -ww`) carried the correctly-computed dock coordinates
   computed from that window's real on-screen geometry.
 
@@ -309,26 +309,26 @@ passing.
   `about:debugging → Load Temporary Add-on`) rather than the classic
   proxy-file trick. Verified two independent ways, live, against the
   running process (not by reading logs):
-  - `listAddons` over RDP shows `fast-reader@zotero-glide.local` /
-    "Zotero Fast Reader" installed, active, no warnings.
+  - `listAddons` over RDP shows `glide@zotero-glide.local` /
+    "Zotero Glide" installed, active, no warnings.
   - After a real (file-watcher-triggered, i.e. genuine
     `shutdown()`→`startup()`) addon reload, evaluating JS in the live
     process shows `Zotero.MenuManager`'s internal registry contains
     exactly the expected entry: target `main/library/item`, label "Open
-    in Fast Reader", both `onShowing` and `onCommand` present as real
+    in Zotero Glide", both `onShowing` and `onCommand` present as real
     functions.
   - See `packages/zotero-plugin/.env.example` and the "Zotero dev
     loading" section below for how to reproduce this.
 - **A real bug was found and fixed in the process**: `bootstrap.js` loads
   `src/errors.js`, `platform.js`, `resolveHelper.js`, `pdfAttachment.js`,
-  `buildArgs.js`, `launchFastReader.js`, `fastReader.js` via successive
+  `buildArgs.js`, `launchGlide.js`, `glide.js` via successive
   `Services.scriptloader.loadSubScript(url)` calls (no scope argument,
   so each lands in the caller's own global — see `addon/src/errors.js`'s
   comment). Every one of those files ended with an identical `const
   exportsObj = {...}` for the Node/CommonJS export path. Loaded into
   Zotero's actual bootstrap scope, the *second* such file threw
   `SyntaxError: redeclaration of const exportsObj`, silently aborting the
-  rest of `startup()` — so `FastReader.addToAllWindows()` (and the menu
+  rest of `startup()` — so `Glide.addToAllWindows()` (and the menu
   registration) never ran, while the addon still showed as "active" at
   the AddonManager level (no visible top-level error in the places this
   was checked first). Found by loading the exact same file chain, live,
@@ -340,9 +340,9 @@ passing.
   which is exactly why it wasn't caught by tests — see "Important
   decisions" below).
 - **Installable `.xpi` builds via `npm run build`** (`zotero-plugin build`):
-  produces `.scaffold/build/zotero-fast-reader.xpi`, verified to contain
+  produces `.scaffold/build/zotero-glide.xpi`, verified to contain
   the correct `manifest.json`, `bootstrap.js`, all `src/*.js` modules, and
-  the `bin/macos-arm64/fast-reader-helper` binary with its executable bit
+  the `bin/macos-arm64/glide-helper` binary with its executable bit
   preserved in the zip (`zipinfo -l` confirmed `-rwxr-xr-x`). Two real bugs
   were found and fixed here, both caught only by testing the *actual*
   "Install from file" path (see below), not the RDP temporary-install path
@@ -467,7 +467,7 @@ live via RDP console evaluation, step by step, exactly as the earlier
    `.ftl` file for one static string.
 2. **Crash resolving the helper path.** A real "Install from file" install
    keeps the `.xpi` **packed** -- `rootURI` is
-   `jar:file:///.../fast-reader@....xpi!/`, not a plain `file://`
+   `jar:file:///.../glide@....xpi!/`, not a plain `file://`
    directory (confirmed live: `AddonManager.getAddonByID(...).getResourceURI()`).
    `loadSubScript` handles `jar:` URIs transparently for *script* loading
    (that's why the plugin's JS ran at all), but `Zotero.File.pathToFile()`
@@ -475,7 +475,7 @@ live via RDP console evaluation, step by step, exactly as the earlier
    could, `Subprocess.call()` cannot execute a binary living inside a zip
    in the first place. Fixed with a new pure module,
    `addon/src/extractHelper.js` (`resolveHelperPathPacked`, 7 new unit
-   tests), which `fastReader.js` uses instead of the plain
+   tests), which `glide.js` uses instead of the plain
    `resolveHelper.js` whenever `rootURI.startsWith("jar:")`: it `fetch()`s
    the binary's bytes straight out of the packed xpi (confirmed live:
    `fetch()` works transparently on `jar:` URIs), writes them to a real,
@@ -485,7 +485,7 @@ live via RDP console evaluation, step by step, exactly as the earlier
    live) -- `Zotero.isMac`/`isWin`/`isLinux` are the real API. This made
    every real launch attempt fail with `UnsupportedPlatformError:
    .../undefined/aarch64` regardless of the other two fixes. Fixed with a
-   small `_hostPlatform()` mapping in `fastReader.js`; `platform.js`
+   small `_hostPlatform()` mapping in `glide.js`; `platform.js`
    itself (already tested against plain "mac"/"win"/"linux" strings)
    needed no change.
 4. **`IOUtils.setPermissions(path, "755")` silently does the wrong
@@ -495,17 +495,17 @@ live via RDP console evaluation, step by step, exactly as the earlier
    executable by its owner). Found while verifying fix #2. Fixed.
 
 **All four verified together, live, end-to-end, through the actual
-`FastReader.openInFastReader()` method** (not a hand-rolled equivalent) --
+`Glide.openInGlide()` method** (not a hand-rolled equivalent) --
 a real PDF item, a real packed install, `Zotero.isMac`-based platform
 detection, real extraction to `Zotero.DataDirectory.dir`, and a real
-`fast-reader-helper` process observed in `ps` with the correct file
+`glide-helper` process observed in `ps` with the correct file
 argument, launched and exited cleanly with no error dialog.
 
 ## Not working / not verified
 
 - **An actual mouse click on the real menu item, through the real UI,
   has still not been performed** -- everything above was driven via
-  direct method calls (`FastReader.openInFastReader(item)`) replicating
+  direct method calls (`Glide.openInGlide(item)`) replicating
   exactly what `onCommand` does, not a literal right-click + menu
   selection, since this sandbox still has no Accessibility/Screen-Recording
   permission to drive or observe that. Given the menu now visibly renders
@@ -580,7 +580,7 @@ argument, launched and exited cleanly with no error dialog.
 
 ## Next concrete step
 
-Have a human actually click "Open in Fast Reader" on a real PDF
+Have a human actually click "Open in Zotero Glide" on a real PDF
 attachment (install the built `.xpi`, or `npm start` for the dev flow)
 and *look at it*: confirm the reader window appears, shows the correct
 label in the menu, and opens docked to the right of Zotero's window at

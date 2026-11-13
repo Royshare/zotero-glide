@@ -31,7 +31,7 @@ annotation inserts, and stay readable by Zotero's own reader and other plugins. 
   Other PDFs fall through to Zotero's own behavior.
 
 ## Known limits
-- A plain page link is opened by Zotero (`loadURI`), which only lands in Glide when "make Fast Reader the default
+- A plain page link is opened by Zotero (`loadURI`), which only lands in Glide when "make Zotero Glide the default
   opener" is on; otherwise it opens Zotero's reader. Annotation citations always jump in place.
 - Notes are edited in the Zotero process (its editor is a Gecko iframe); the helper process is unaffected.
 - Notes need Zotero's `note-editor` custom element; if it is missing the pane offers "Open in Zotero".

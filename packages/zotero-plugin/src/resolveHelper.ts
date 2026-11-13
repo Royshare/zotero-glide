@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Copyright (C) 2026 Zotero Fast Reader contributors
+// Copyright (C) 2026 Zotero Glide contributors
 
 /**
  * Resolves the absolute path to the platform-appropriate
- * `fast-reader-helper` executable, given the plugin's own root directory.
+ * `glide-helper` executable, given the plugin's own root directory.
  * No Zotero/Node filesystem calls here -- `pathJoin` and `fileExists` are
  * injected so this is fully testable with fakes (brief §15: "missing
  * executable handling" must be tested). This one *is* genuine dependency
@@ -19,7 +19,7 @@ import { resolvePlatformDir, helperFileName } from "./platform.ts";
 export interface ResolveHelperOpts {
   /** Plugin install directory (contains `bin/`). */
   rootDir: string;
-  /** e.g. the value from fastReader.ts's `hostPlatform()`, or process.platform in tests. */
+  /** e.g. the value from glide.ts's `hostPlatform()`, or process.platform in tests. */
   platform: string;
   /** e.g. Zotero.arch, or process.arch in tests. */
   arch: string;
