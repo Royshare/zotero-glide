@@ -63,6 +63,9 @@ jobs:
         working-directory: packages/reader-helper
         run: cargo test --release --locked --lib --bin fast-reader-helper
       - name: cargo build
+        # Skipped on Windows (~3 min of MSVC LTCG): the test step links the same code, and the release
+        # workflow builds and ships the real binary on every platform.
+        if: runner.os != 'Windows'
         working-directory: packages/reader-helper
         run: cargo build --release --locked --bin fast-reader-helper
       - name: Benchmark binary and examples still compile
