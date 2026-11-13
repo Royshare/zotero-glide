@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 Zotero Fast Reader contributors
+# Copyright (C) 2026 Zotero Glide contributors
 name: Bug report
 description: Something doesn't work as expected
 labels: [bug]
@@ -7,7 +7,7 @@ body:
   - type: input
     id: version
     attributes:
-      label: Fast Reader version
+      label: Zotero Glide version
       placeholder: "0.1.0"
     validations: {required: true}
   - type: input
@@ -48,5 +48,5 @@ body:
     id: logs
     attributes:
       label: Logs
-      description: "Run the helper with `FAST_READER_DEBUG=1`, or paste Zotero's Help → Debug Output Logging. Remove anything private."
+      description: "Run the helper with `GLIDE_DEBUG=1`, or paste Zotero's Help → Debug Output Logging. Remove anything private."
       render: text

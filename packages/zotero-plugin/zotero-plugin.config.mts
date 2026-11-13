@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Copyright (C) 2026 Zotero Fast Reader contributors
+// Copyright (C) 2026 Zotero Glide contributors
 
 import { defineConfig } from "zotero-plugin-scaffold";
 import pkg from "./package.json";
@@ -32,7 +32,7 @@ export default defineConfig({
 
   build: {
     // NOT "addon/**/*.*" -- the helper binaries under addon/bin/<platform>/
-    // have no file extension (fast-reader-helper, no ".exe" on
+    // have no file extension (glide-helper, no ".exe" on
     // macOS/Linux), so a "*.*" glob silently drops them. Confirmed by
     // testing: the binary was missing from .scaffold/build/addon/bin/
     // until this was fixed to "addon/**/*".
@@ -56,7 +56,7 @@ export default defineConfig({
     },
     // This plugin doesn't use Fluent (no .ftl files -- the one string in
     // its UI is set directly via context.menuElem.setAttribute, see
-    // fastReader.ts). Without this, scaffold regenerates a broken
+    // glide.ts). Without this, scaffold regenerates a broken
     // typings/i10n.d.ts (`export type FluentMessageId = ;`, invalid
     // syntax with zero locale files) on every build, which then fails
     // `tsc --noEmit`.

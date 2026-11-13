@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 Zotero Fast Reader contributors
-# Builds fast-reader-helper for the current host and copies it into
+# Copyright (C) 2026 Zotero Glide contributors
+# Builds glide-helper for the current host and copies it into
 # packages/zotero-plugin/addon/bin/<platform-dir>/, matching the layout
 # resolvePlatformDir() (packages/zotero-plugin/src/platform.js) and
 # docs/cross-platform.md expect. Does not cross-compile -- run this once
@@ -11,8 +11,8 @@
 set -euo pipefail
 # The release workflow assembles binaries built on several OSes; it sets this so the
 # npm prebuild hook does not try to build the (single, host-only) helper again.
-if [[ -n "${FAST_READER_SKIP_HELPER_BUILD:-}" ]]; then
-  echo "FAST_READER_SKIP_HELPER_BUILD set: using the helper binaries already in addon/bin/"
+if [[ -n "${GLIDE_SKIP_HELPER_BUILD:-}" ]]; then
+  echo "GLIDE_SKIP_HELPER_BUILD set: using the helper binaries already in addon/bin/"
   exit 0
 fi
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -28,18 +28,18 @@ case "$os" in
       x86_64) platform_dir="macos-x64" ;;
       *) echo "Unsupported macOS arch: $arch" >&2; exit 1 ;;
     esac
-    bin_name="fast-reader-helper"
+    bin_name="glide-helper"
     ;;
   Linux)
     case "$arch" in
       x86_64) platform_dir="linux-x64" ;;
       *) echo "Unsupported Linux arch: $arch" >&2; exit 1 ;;
     esac
-    bin_name="fast-reader-helper"
+    bin_name="glide-helper"
     ;;
   MINGW*|MSYS*|CYGWIN*)
     platform_dir="windows-x64"
-    bin_name="fast-reader-helper.exe"
+    bin_name="glide-helper.exe"
     # The safe mupdf crate requires max_align_t, absent from MSVC's C headers.
     # Give bindgen the matching declaration without changing registry sources.
     bindgen_header="$(cygpath -m "$ROOT/scripts/msvc-bindgen.h")"
@@ -51,7 +51,7 @@ case "$os" in
     echo "Unsupported OS: $os" >&2; exit 1 ;;
 esac
 
-echo "Building fast-reader-helper (release) for $platform_dir..."
+echo "Building glide-helper (release) for $platform_dir..."
 (cd "$HELPER_DIR" && cargo build --release)
 
 mkdir -p "$PLUGIN_BIN_DIR/$platform_dir"

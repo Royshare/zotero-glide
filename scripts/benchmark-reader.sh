@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 Zotero Fast Reader contributors
-# Performance validation procedure for fast-reader-helper (brief §16).
+# Copyright (C) 2026 Zotero Glide contributors
+# Performance validation procedure for glide-helper (brief §16).
 #
 # Two measurement paths, on purpose (see docs/benchmark-methodology.md):
-#   1. The REAL `fast-reader-helper` GUI binary is launched against each
+#   1. The REAL `glide-helper` GUI binary is launched against each
 #      fixture to measure startup time, time-to-first-page, idle RSS, and
 #      idle CPU -- the actual shipped binary, actually opening a window.
 #   2. `bench_navigate` (a small headless binary sharing the exact same
@@ -22,7 +22,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROFILE="${1:-release}"
 HELPER_DIR="$ROOT/packages/reader-helper"
-BIN="$HELPER_DIR/target/$PROFILE/fast-reader-helper"
+BIN="$HELPER_DIR/target/$PROFILE/glide-helper"
 BENCH_BIN="$HELPER_DIR/target/$PROFILE/bench_navigate"
 FIXTURES_DIR="$ROOT/benchmarks/fixtures"
 
@@ -53,7 +53,7 @@ echo "document,startup_to_window_ms,startup_to_first_page_ms,idle_mem_kb_at_1s,i
 for doc in "$FIXTURES_DIR"/paper-a.pdf "$FIXTURES_DIR"/book-b.pdf "$FIXTURES_DIR"/scanned-c.pdf; do
   name="$(basename "$doc")"
   log="$(mktemp)"
-  FAST_READER_DEBUG=1 "$BIN" "$doc" >"$log" 2>&1 &
+  GLIDE_DEBUG=1 "$BIN" "$doc" >"$log" 2>&1 &
   pid=$!
   sleep 1
   rss1="$(mem_kb "$pid")"
@@ -82,7 +82,7 @@ cat <<'EOF'
 --- manual step (not automatable in this sandbox) ---
 To validate navigation memory against the REAL windowed binary on a
 developer machine with normal OS input permissions:
-  FAST_READER_DEBUG=1 ./target/release/fast-reader-helper <doc.pdf>
+  GLIDE_DEBUG=1 ./target/release/glide-helper <doc.pdf>
   # press PageDown 20 times, then: ps -o rss= -p <pid>
   # press PageDown 80 more times (100 total), then: ps -o rss= -p <pid>
 Compare against the bench_navigate numbers above -- they should be close,

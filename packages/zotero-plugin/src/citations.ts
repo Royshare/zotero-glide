@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Copyright (C) 2026 Zotero Fast Reader contributors
+// Copyright (C) 2026 Zotero Glide contributors
 
 /**
  * Numbered citations ("...bacteria,7,10,11", "[3, 5-7]") and the reference list they point to. Pure,

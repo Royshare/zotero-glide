@@ -1,19 +1,19 @@
 {
-  "name": "zotero-fast-reader-plugin",
+  "name": "zotero-glide-plugin",
   "version": "0.1.1",
   "private": true,
-  "description": "Zotero 10 plugin: adds \"Open in Fast Reader\" and launches the fast-reader-helper native process. See ../../docs/adr/001-reader-helper-stack.md.",
+  "description": "Zotero 10 plugin: adds \"Open in Zotero Glide\" and launches the glide-helper native process. See ../../docs/adr/001-reader-helper-stack.md.",
   "type": "module",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Royshare/zotero-glide.git"
   },
   "config": {
-    "addonName": "Zotero Fast Reader",
-    "addonID": "fast-reader@zotero-glide.local",
-    "addonRef": "fast-reader",
-    "addonInstance": "FastReader",
-    "prefsPrefix": "extensions.zotero.fast-reader"
+    "addonName": "Zotero Glide",
+    "addonID": "glide@zotero-glide.local",
+    "addonRef": "glide",
+    "addonInstance": "Glide",
+    "prefsPrefix": "extensions.zotero.glide"
   },
   "scripts": {
     "test": "node --test",

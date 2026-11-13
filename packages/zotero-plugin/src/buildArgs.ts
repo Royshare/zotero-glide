@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Copyright (C) 2026 Zotero Fast Reader contributors
+// Copyright (C) 2026 Zotero Glide contributors
 
 /**
- * Builds the argv array passed to `fast-reader-helper` (see brief §7:
+ * Builds the argv array passed to `glide-helper` (see brief §7:
  * "Do NOT construct a shell command by concatenating unescaped strings.
  * Use an appropriate process-spawn API with an argument array.")
  *
@@ -17,8 +17,8 @@
  * process isolation is kept; only the window's on-screen position/size
  * change to look integrated. See docs/adr and STATUS.md for why this
  * stays a separate process rather than a literal embedded tab).
- * `x`/`y` are the *target* position for the Fast Reader window itself
- * (fastReader.ts computes this from Zotero's own window geometry, e.g.
+ * `x`/`y` are the *target* position for the Zotero Glide window itself
+ * (glide.ts computes this from Zotero's own window geometry, e.g.
  * its right edge), not Zotero's own position.
  */
 export interface DockGeometry {

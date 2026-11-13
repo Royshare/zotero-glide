@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Copyright (C) 2026 Zotero Fast Reader contributors
+// Copyright (C) 2026 Zotero Glide contributors
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -9,7 +9,7 @@ import { dirname, join } from "node:path";
 import { windowsBuildEnvironment } from "../../../scripts/prepare-plugin.mjs";
 
 function fixture(t) {
-  const root = mkdtempSync(join(tmpdir(), "fast-reader-build-"));
+  const root = mkdtempSync(join(tmpdir(), "glide-build-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const file = (...parts) => {
     const path = join(root, ...parts);
@@ -69,7 +69,7 @@ test("release packaging can skip the helper without a native build toolchain", (
   const f = fixture(t);
   rmSync(dirname(f.cargo), { recursive: true });
   const { bash, env } = windowsBuildEnvironment(f.root, {
-    Path: `${f.wsl};${f.git}`, FAST_READER_SKIP_HELPER_BUILD: "1",
+    Path: `${f.wsl};${f.git}`, GLIDE_SKIP_HELPER_BUILD: "1",
   }, () => { throw new Error("must not look for Visual Studio"); });
   assert.equal(bash, f.bash);
   assert.equal(env.MUPDF_MSVC_PLATFORM_TOOLSET, undefined);

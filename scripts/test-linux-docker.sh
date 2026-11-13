@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 Zotero Fast Reader contributors
+# Copyright (C) 2026 Zotero Glide contributors
 # Builds and exercises the helper on real Linux inside a container (Docker /
 # OrbStack), from a macOS or Linux host. Covers the HELPER only -- not Zotero
 # on Linux (the plugin/tab side needs a real Linux Zotero).

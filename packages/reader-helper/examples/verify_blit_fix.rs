@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Copyright (C) 2026 Zotero Fast Reader contributors
+// Copyright (C) 2026 Zotero Glide contributors
 
-use fast_reader_helper::engine::mupdf_engine::MuPdfDocumentEngine;
-use fast_reader_helper::engine::DocumentEngine;
+use glide_helper::engine::mupdf_engine::MuPdfDocumentEngine;
+use glide_helper::engine::DocumentEngine;
 use mupdf::{Colorspace, ImageFormat, Pixmap};
 
 fn main() {

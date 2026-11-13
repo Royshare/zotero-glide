@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Copyright (C) 2026 Zotero Fast Reader contributors
+// Copyright (C) 2026 Zotero Glide contributors
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -121,7 +121,7 @@ test("non-event lines (e.g. the helper's stderr text) go to onOutput", async () 
   const out: string[] = [];
   const c = new HelperConnection(f.proc, { onEvent: () => {}, onExit: () => {}, onOutput: (l) => out.push(l) });
   c.start();
-  f.feed("[fast-reader] failed to open document: broken\n");
+  f.feed("[glide] failed to open document: broken\n");
   await tick(); await tick();
-  assert.deepEqual(out, ["[fast-reader] failed to open document: broken"]);
+  assert.deepEqual(out, ["[glide] failed to open document: broken"]);
 });

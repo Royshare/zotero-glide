@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Copyright (C) 2026 Zotero Fast Reader contributors
+// Copyright (C) 2026 Zotero Glide contributors
 
 //! Headless "serve" mode: the helper has no window; a host (the Zotero plugin's reader *tab*) drives it
 //! over stdin/stdout and does all layout, scrolling, selection and UI itself. See docs/adr/002 and 003.

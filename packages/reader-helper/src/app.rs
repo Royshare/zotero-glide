@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Copyright (C) 2026 Zotero Fast Reader contributors
+// Copyright (C) 2026 Zotero Glide contributors
 
 //! Window, input, and blit-to-surface. Delegates all reader behavior to
 //! `ReaderSession`; knows nothing about MuPDF types directly (see docs/adr).
@@ -29,7 +29,7 @@ const DEFAULT_WINDOW_SIZE: (u32, u32) = (900, 1150);
 /// own window (v0.2: visual/positional integration only -- see
 /// docs/adr's ADR and STATUS.md for why this stays a separate process
 /// rather than a literal embedded tab). `x`/`y` are the target position
-/// for the Fast Reader window itself (the caller -- fastReader.ts --
+/// for the Zotero Glide window itself (the caller -- glide.ts --
 /// computes this as Zotero's own window right edge, not Zotero's own
 /// position), and `height` matches Zotero's window height. Width is left
 /// at the normal default; only position and height change for "docked."
@@ -423,7 +423,7 @@ impl<E: DocumentEngine> ApplicationHandler for App<E> {
         let window = match event_loop.create_window(attrs) {
             Ok(w) => Rc::new(w),
             Err(e) => {
-                eprintln!("[fast-reader] failed to create window: {e}");
+                eprintln!("[glide] failed to create window: {e}");
                 event_loop.exit();
                 return;
             }
@@ -431,7 +431,7 @@ impl<E: DocumentEngine> ApplicationHandler for App<E> {
         let context = match softbuffer::Context::new(window.clone()) {
             Ok(c) => c,
             Err(e) => {
-                eprintln!("[fast-reader] failed to create render context: {e}");
+                eprintln!("[glide] failed to create render context: {e}");
                 event_loop.exit();
                 return;
             }
@@ -439,7 +439,7 @@ impl<E: DocumentEngine> ApplicationHandler for App<E> {
         let surface = match softbuffer::Surface::new(&context, window.clone()) {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("[fast-reader] failed to create render surface: {e}");
+                eprintln!("[glide] failed to create render surface: {e}");
                 event_loop.exit();
                 return;
             }

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 Zotero Fast Reader contributors
+# Copyright (C) 2026 Zotero Glide contributors
 """Usage: python3 compare.py <workdir> [paper-name ...]   (env: OUT=file.jsonl MODES=pdfjs,fast ZOTERO_APP=...)
 Needs: an ISOLATED Zotero profile at <workdir>/p10 and data dir <workdir>/d10 with the plugin's
 built .xpi installed and the benchmark PDFs imported (attachment ids in PAPERS below).
 NEVER point this at your real profile. Summarize with: python3 summarize.py <out.jsonl>
-Head-to-head: Zotero's PDF.js reader tab vs the Fast Reader tab, same Zotero, same PDFs.
+Head-to-head: Zotero's PDF.js reader tab vs the Zotero Glide tab, same Zotero, same PDFs.
 Fresh Zotero launch per (paper, mode). Memory = sum of macOS phys_footprint over the whole
 process tree of that Zotero instance (parent + Gecko children + our helper)."""
 import json, os, re, subprocess, sys, time, statistics
@@ -43,7 +43,7 @@ def snapshot(root):
     for k in kids(root):
         cmd = subprocess.run(["ps", "-o", "command=", "-p", str(k)], capture_output=True, text=True).stdout
         v = fp(k)
-        if "fast-reader-helper" in cmd: parts["helper"] += v
+        if "glide-helper" in cmd: parts["helper"] += v
         else: parts["children"] += v
     parts["total"] = parts["zotero"] + parts["children"] + parts["helper"]
     return parts
@@ -79,7 +79,7 @@ def run(paper, att, mode):
     else:
         opened = js(f"""
           const t0 = performance.now();
-          await Zotero.FastReader.openInTab(Zotero.Items.get({att}));
+          await Zotero.Glide.openInTab(Zotero.Items.get({att}));
           const d = Zotero.getMainWindow().document;
           while (!(d.querySelector('.fr-page canvas')?.width > 0)) await new Promise(r => setTimeout(r, 5));
           return JSON.stringify({{ firstPageMs: Math.round(performance.now() - t0), pages: parseInt(d.querySelector('.fr-label').textContent.replace('/ ','')) || null }});""", 90)

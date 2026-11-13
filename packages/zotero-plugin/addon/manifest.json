@@ -1,16 +1,16 @@
 {
   "manifest_version": 2,
-  "name": "Zotero Fast Reader",
+  "name": "Zotero Glide",
   "version": "0.1.1",
   "description": "Open PDF attachments in a lightweight, process-isolated MuPDF reader alongside Zotero's built-in reader.",
-  "author": "Zotero Fast Reader contributors",
+  "author": "Zotero Glide contributors",
   "icons": {
     "48": "content/icons/zotero-glide.svg",
     "96": "content/icons/zotero-glide.svg"
   },
   "applications": {
     "zotero": {
-      "id": "fast-reader@zotero-glide.local",
+      "id": "glide@zotero-glide.local",
       "update_url": "https://github.com/Royshare/zotero-glide/releases/latest/download/update.json",
       "strict_min_version": "7.0",
       "strict_max_version": "10.*"

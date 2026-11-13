@@ -22,9 +22,9 @@ entanglement in the fixtures themselves:
 ## Two measurement paths (and why)
 
 1. **Startup time, time-to-first-page, idle memory, idle CPU** are measured
-   against the actual shipped `fast-reader-helper` GUI binary -- it is
+   against the actual shipped `glide-helper` GUI binary -- it is
    launched for real, opens a real window, and its own debug log
-   (`FAST_READER_DEBUG=1`, timestamped in `src/log.rs`) is parsed for the
+   (`GLIDE_DEBUG=1`, timestamped in `src/log.rs`) is parsed for the
    `first frame presented` marker.
 
 2. **Memory after navigating 20 / 100 pages** is measured with

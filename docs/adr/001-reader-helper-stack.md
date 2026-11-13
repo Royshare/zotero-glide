@@ -130,7 +130,7 @@ Accepted trade-offs (recorded, not hidden):
 ## Consequences
 
 - `packages/reader-helper` is a single Rust crate/binary,
-  `fast-reader-helper`, built with `cargo build --release` per target
+  `glide-helper`, built with `cargo build --release` per target
   triple (see docs/cross-platform.md for the platform/arch matrix).
 - MuPDF is statically linked in via `mupdf-sys`'s vendored build — no
   system MuPDF dependency required on end-user machines (see

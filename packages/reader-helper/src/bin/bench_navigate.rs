@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Copyright (C) 2026 Zotero Fast Reader contributors
+// Copyright (C) 2026 Zotero Glide contributors
 
 //! Headless navigation benchmark: drives `ReaderSession` (the same
 //! render/cache/prefetch/evict code path `App`'s `RedrawRequested` handler
@@ -17,10 +17,10 @@
 //!
 //! Usage: bench_navigate <pdf-path> [window_w] [window_h]
 
-use fast_reader_helper::engine::mupdf_engine::MuPdfDocumentEngine;
-use fast_reader_helper::engine::DocumentEngine;
-use fast_reader_helper::session::ReaderSession;
-use fast_reader_helper::state::ReaderState;
+use glide_helper::engine::mupdf_engine::MuPdfDocumentEngine;
+use glide_helper::engine::DocumentEngine;
+use glide_helper::session::ReaderSession;
+use glide_helper::state::ReaderState;
 use std::time::Instant;
 
 /// Prefers macOS's `footprint` (phys_footprint -- the same metric Activity

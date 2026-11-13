@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 Zotero Fast Reader contributors
+# Copyright (C) 2026 Zotero Glide contributors
 #
 # Builds the "complete corresponding source" archive that accompanies every release
 # (AGPL-3.0 section 6): this repository at HEAD plus the vendored source of every Rust
@@ -12,7 +12,7 @@ set -euo pipefail
 VERSION="${1:?usage: make-source-archive.sh <version> <output.tar.gz>}"
 OUT="$(cd "$(dirname "${2:?usage: make-source-archive.sh <version> <output.tar.gz>}")" && pwd)/$(basename "$2")"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-NAME="zotero-fast-reader-${VERSION}-source"
+NAME="zotero-glide-${VERSION}-source"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
@@ -25,7 +25,7 @@ git -C "$ROOT" archive --format=tar --prefix="$NAME/" HEAD | tar -x -C "$WORK"
   cargo vendor --locked vendor > .cargo/config.toml
 )
 cat > "$WORK/$NAME/BUILDING-FROM-THIS-ARCHIVE.txt" <<TXT
-This archive contains the complete corresponding source of Zotero Fast Reader ${VERSION}:
+This archive contains the complete corresponding source of Zotero Glide ${VERSION}:
 the project, plus the vendored source of all Rust dependencies (packages/reader-helper/vendor/,
 which includes MuPDF in mupdf-sys). Rust dependencies need no network:
 

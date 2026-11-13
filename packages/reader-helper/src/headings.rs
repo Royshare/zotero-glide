@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Copyright (C) 2026 Zotero Fast Reader contributors
+// Copyright (C) 2026 Zotero Glide contributors
 
 //! A table of contents for PDFs that have no outline, found the way Zotero's own reader finds one: headings
 //! are lines set in a different font or size than the body text, and the same style repeats through the

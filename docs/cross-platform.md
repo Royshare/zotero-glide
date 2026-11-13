@@ -4,10 +4,10 @@
 
 ```
 packages/zotero-plugin/addon/bin/
-├── macos-arm64/fast-reader-helper
-├── macos-x64/fast-reader-helper
-├── windows-x64/fast-reader-helper.exe
-└── linux-x64/fast-reader-helper
+├── macos-arm64/glide-helper
+├── macos-x64/glide-helper
+├── windows-x64/glide-helper.exe
+└── linux-x64/glide-helper
 ```
 
 `addon/` is the plugin's own shippable root (contains `manifest.json`,
@@ -32,7 +32,7 @@ and target triple.
 
 `packages/zotero-plugin/src/platform.ts` maps a platform/arch string pair
 to one of the four directory names above. The real caller
-(`fastReader.ts`'s `_hostPlatform()`) derives that string from
+(`glide.ts`'s `_hostPlatform()`) derives that string from
 `Zotero.isMac`/`isWin`/`isLinux` + `Zotero.arch` -- **not**
 `Zotero.platform`, which doesn't exist in current Zotero (confirmed live;
 see STATUS.md). Tests pass Node's `process.platform`/`process.arch`
@@ -84,8 +84,8 @@ For direct `bash scripts/build-helper.sh` invocations, use Git Bash and set
 `LIBCLANG_PATH` and `MUPDF_MSVC_PLATFORM_TOOLSET` yourself; the automatic
 discovery applies to the npm `build` and `start` hooks.
 
-The result is `packages/zotero-plugin/.scaffold/build/zotero-fast-reader.xpi`,
-containing `bin/windows-x64/fast-reader-helper.exe`. Install it using
+The result is `packages/zotero-plugin/.scaffold/build/zotero-glide.xpi`,
+containing `bin/windows-x64/glide-helper.exe`. Install it using
 Zotero's Tools → Plugins → gear → Install Plugin From File.
 
 The Windows branch of `build-helper.sh` pre-includes `scripts/msvc-bindgen.h`
@@ -118,7 +118,7 @@ Manual interaction with the installed plugin inside Zotero is still pending.
 
 **[NOT DONE for v0.1 -- documented for whoever picks this up next.]**
 
-- **macOS notarization:** an unsigned/unnotarized `fast-reader-helper`
+- **macOS notarization:** an unsigned/unnotarized `glide-helper`
   binary launched via `Subprocess.call()` will be quarantined by
   Gatekeeper if it was ever downloaded (quarantine xattr), and Gatekeeper
   will block it outright without a Developer ID signature + notarization
@@ -150,7 +150,7 @@ tests on Node 24.
 
 `.github/workflows/release.yml` (tag `vX.Y.Z`, which must equal the plugin's
 `package.json` version): builds the helper on all four platforms, assembles one
-`.xpi` containing all four binaries (`FAST_READER_SKIP_HELPER_BUILD=1` makes the
+`.xpi` containing all four binaries (`GLIDE_SKIP_HELPER_BUILD=1` makes the
 npm `prebuild` hook use them instead of building the host's), builds the
 AGPL corresponding-source archive (`scripts/make-source-archive.sh`: project +
 `cargo vendor`, MuPDF included), and publishes the three files with SHA256SUMS.

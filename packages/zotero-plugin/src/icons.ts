@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Copyright (C) 2026 Zotero Fast Reader contributors
+// Copyright (C) 2026 Zotero Glide contributors
 
 /**
  * Toolbar icons: inlined SVG geometry from Lucide (https://lucide.dev, ISC License; portions Feather, MIT --

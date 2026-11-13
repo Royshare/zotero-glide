@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Copyright (C) 2026 Zotero Fast Reader contributors
+// Copyright (C) 2026 Zotero Glide contributors
 
 /**
  * Zotero 7+/10 bootstrapped plugin lifecycle. Structure follows the
@@ -10,7 +10,7 @@
  * Deliberately tiny: loads the ONE esbuild-bundled script (built from
  * src/index.ts -- see ../zotero-plugin.config.mts) via
  * `Services.scriptloader.loadSubScript`, which attaches the plugin as
- * `Zotero.FastReader`, then just calls its lifecycle methods. No
+ * `Zotero.Glide`, then just calls its lifecycle methods. No
  * multi-file loadSubScript chain here anymore -- that's what caused a
  * real bug (see STATUS.md: `const exportsObj` redeclaration across
  * separately-loaded files) before the TypeScript/bundling migration.
@@ -21,20 +21,20 @@
 function install(_data, _reason) {}
 
 function startup({ id, version, rootURI }, _reason) {
-  Services.scriptloader.loadSubScript(rootURI + "content/scripts/fast-reader.js");
-  Zotero.FastReader.init({ id, version, rootURI });
-  Zotero.FastReader.addToAllWindows();
+  Services.scriptloader.loadSubScript(rootURI + "content/scripts/glide.js");
+  Zotero.Glide.init({ id, version, rootURI });
+  Zotero.Glide.addToAllWindows();
 }
 
 function onMainWindowLoad({ window }) {
-  if (Zotero.FastReader) {
-    Zotero.FastReader.addToWindow(window);
+  if (Zotero.Glide) {
+    Zotero.Glide.addToWindow(window);
   }
 }
 
 function onMainWindowUnload({ window }) {
-  if (Zotero.FastReader) {
-    Zotero.FastReader.removeFromWindow(window);
+  if (Zotero.Glide) {
+    Zotero.Glide.removeFromWindow(window);
   }
 }
 
@@ -44,8 +44,8 @@ function shutdown(_data, reason) {
   // already be mid-teardown itself. Only clean up for an actual
   // plugin-level disable/uninstall/upgrade.
   if (reason === "APP_SHUTDOWN") return;
-  if (Zotero.FastReader) {
-    Zotero.FastReader.removeFromAllWindows();
+  if (Zotero.Glide) {
+    Zotero.Glide.removeFromAllWindows();
   }
 }
 

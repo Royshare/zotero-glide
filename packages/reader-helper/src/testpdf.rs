@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Copyright (C) 2026 Zotero Fast Reader contributors
+// Copyright (C) 2026 Zotero Glide contributors
 
 //! Builds small, valid PDFs in memory for tests: known text at known positions, an outline, internal
 //! and external links, a rotated page and an offset CropBox. No external fixtures needed.

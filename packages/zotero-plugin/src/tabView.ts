@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Copyright (C) 2026 Zotero Fast Reader contributors
+// Copyright (C) 2026 Zotero Glide contributors
 
 /// <reference lib="dom" />
 /**
@@ -387,7 +387,7 @@ export class ReaderView {
     // ---- toolbar (mirrors Zotero's reader: sidebar/navigation/zoom left, tools centre, find + view right)
     const bar = el("div", "fr-bar", undefined, this.root);
     const brand = el("span", "fr-brand", undefined, bar);
-    brand.title = "Zotero Glide: a fast reader plugin for Zotero";
+    brand.title = "Zotero Glide: a fast PDF reader plugin for Zotero";
     brand.append(createGlideMark(doc, 16), doc.createTextNode("Glide"));
     const left = el("div", "fr-grp", undefined, bar);
     btn("panel-left", "Toggle sidebar", () => ev.toggleSidebar(), left);

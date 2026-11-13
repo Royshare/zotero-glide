@@ -53,14 +53,14 @@ Zotero's process again.
 
 ```
 Zotero main window
- └─ Zotero_Tabs.add({ type: "fastreader" })        one tab per PDF
+ └─ Zotero_Tabs.add({ type: "glide" })        one tab per PDF
      └─ ReaderView  (toolbar + scrolling <canvas>)  src/tabView.ts
          ▲ frames            │ commands
          │                   ▼
     ReaderTab ── HelperConnection ── stdin/stdout JSON lines ──┐
     (src/readerTab.ts)  (src/helperConnection.ts)               │
                                                                 ▼
-                              fast-reader-helper --serve --frame-dir D --file X.pdf
+                              glide-helper --serve --frame-dir D --file X.pdf
                               (src/serve.rs: ReaderSession, current page only)
 ```
 
@@ -103,7 +103,7 @@ Zotero main window
 
 ### Zotero integration notes (verified against Zotero 11 beta's `tabs.js`)
 - `Zotero_Tabs.add` accepts any `type` string. **The type must not contain a
-  dash** (`parseTabType` splits on `-`), hence `fastreader`.
+  dash** (`parseTabType` splits on `-`), hence `glide`.
 - Zotero persists every tab's `{type, data}` in its session and on restart
   calls `tabHooks.restoreState[type]` for each; with no hook it destructures
   `undefined` -- a TypeError that **aborts restoring every tab after it,
@@ -112,14 +112,14 @@ Zotero main window
   plugin can start after the pane has already restored -- verified). So the
   plugin wraps `Zotero_Tabs.getState()` to never save its own tabs
   (`sessionState.ts`); a reader tab is a live process, not a document.
-  Verified: a saved session contains no `fastreader` entry and the library +
+  Verified: a saved session contains no `glide` entry and the library +
   PDF.js reader tabs restore with 0 errors. Known limit: a session already
   containing such a tab (only from a development build) is not repaired.
 - Keyboard: the tab handles keys itself (`readerKeys.ts`); only keys it
   actually acts on are stopped, so Cmd/Ctrl+W etc. still reach Zotero.
 
 ## Consequences
-- The window-based reader remains, as "Open in Fast Reader (separate window)".
+- The window-based reader remains, as "Open in Zotero Glide (separate window)".
 - No annotations, no text selection/copy, no position persistence yet (same
   non-goals as v0.1/v0.2). Position persistence is now cheap to add (the
   helper reports `page` on every frame); selection needs text geometry from

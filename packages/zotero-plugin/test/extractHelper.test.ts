@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Copyright (C) 2026 Zotero Fast Reader contributors
+// Copyright (C) 2026 Zotero Glide contributors
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -17,8 +17,8 @@ function baseOpts(overrides: Partial<ResolveHelperPathPackedOpts> = {}, initialF
   const opts: ResolveHelperPathPackedOpts = {
     platform: "darwin",
     arch: "arm64",
-    rootURI: "jar:file:///profile/extensions/fast-reader@zotero-glide.local.xpi!/",
-    destDir: "/data/fast-reader-helper-bin/0.1.0",
+    rootURI: "jar:file:///profile/extensions/glide@zotero-glide.local.xpi!/",
+    destDir: "/data/glide-helper-bin/0.1.0",
     pathJoin: (...parts) => parts.join("/"),
     fetchBytes: async () => new Uint8Array([1, 2, 3, 4]),
     writeBytes: async (p, bytes) => {
@@ -42,7 +42,7 @@ function baseOpts(overrides: Partial<ResolveHelperPathPackedOpts> = {}, initialF
   return { opts, files, writes, moves, executableCalls };
 }
 
-const DEST = "/data/fast-reader-helper-bin/0.1.0/macos-arm64/fast-reader-helper";
+const DEST = "/data/glide-helper-bin/0.1.0/macos-arm64/glide-helper";
 
 test("resolveHelperPathPacked extracts to the platform-scoped destination", async () => {
   const { opts, files, executableCalls } = baseOpts();
@@ -63,7 +63,7 @@ test("resolveHelperPathPacked fetches from the correct jar-relative URL", async 
   await resolveHelperPathPacked(opts);
   assert.equal(
     capturedURL,
-    "jar:file:///profile/extensions/fast-reader@zotero-glide.local.xpi!/bin/macos-arm64/fast-reader-helper"
+    "jar:file:///profile/extensions/glide@zotero-glide.local.xpi!/bin/macos-arm64/glide-helper"
   );
 });
 
@@ -150,5 +150,5 @@ test("resolveHelperPathPacked throws UnsupportedPlatformError for an unsupported
 test("resolveHelperPathPacked writes .exe destinations correctly for windows", async () => {
   const { opts } = baseOpts({ platform: "win32", arch: "x64" });
   const path = await resolveHelperPathPacked(opts);
-  assert.equal(path, "/data/fast-reader-helper-bin/0.1.0/windows-x64/fast-reader-helper.exe");
+  assert.equal(path, "/data/glide-helper-bin/0.1.0/windows-x64/glide-helper.exe");
 });

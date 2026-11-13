@@ -1,4 +1,4 @@
-# Future IPC: Zotero ↔ Fast Reader
+# Future IPC: Zotero ↔ Zotero Glide
 
 **Update (v0.3):** a stdin/stdout JSON-lines protocol now exists for the
 in-tab reader (`packages/reader-helper/src/serve.rs`, ADR 002), and it is
@@ -9,13 +9,13 @@ reader) is still design only.
 **Not implemented in v0.1.** This documents a plausible shape for later,
 per §11 of the project brief -- "design, but do NOT implement." v0.1's IPC
 surface stops at: plugin resolves a helper binary path, spawns it with an
-argv array (`fast-reader-helper <pdf-path>` / `--file <path> --page N`),
+argv array (`glide-helper <pdf-path>` / `--file <path> --page N`),
 and does not wait for or talk to it again (see `docs/adr/001-*.md`, §7 of
 the brief).
 
 ## Why this matters later, and why not now
 
-Once Fast Reader is validated as an alternative reading path, real
+Once Zotero Glide is validated as an alternative reading path, real
 usefulness needs some bidirectional signaling:
 
 - `reader.pageChanged(page)` -- so Zotero could show "currently reading
@@ -25,7 +25,7 @@ usefulness needs some bidirectional signaling:
 - `reader.openInZoteroReader(page)` -- "hand back" to Zotero's real reader
   at the same page, e.g. to annotate.
 - `zotero.restorePosition(attachmentKey, page, scroll, zoom)` -- Zotero
-  telling a freshly-launched Fast Reader where the user left off.
+  telling a freshly-launched Zotero Glide where the user left off.
 
 `state::ReaderState` (`src/state.rs`) already carries the fields this would
 need (`page`, `zoom_mode`, `zoom_scale`) precisely so that adding
@@ -50,7 +50,7 @@ to expose an HTTP server... do not introduce localhost networking"):
   incrementally by the plugin, costs nothing extra to wire up and needs no
   new permissions.
 - A named pipe / Unix domain socket would only earn its complexity if
-  Fast Reader needed to be *launched independently* of Zotero (e.g., "open
+  Zotero Glide needed to be *launched independently* of Zotero (e.g., "open
   recent" from the helper itself, or multiple Zotero windows sharing one
   helper) -- not needed for the "one PDF per helper process" model this
   project intentionally keeps (§1, §22: process isolation over clever
@@ -59,7 +59,7 @@ to expose an HTTP server... do not introduce localhost networking"):
 ## A sketch, not a spec
 
 ```
-Zotero plugin                          fast-reader-helper (per PDF)
+Zotero plugin                          glide-helper (per PDF)
      │  spawn(helper, [--file, path,   │
      │         --page, N])             │
      ├─────────────────────────────────▶
@@ -71,7 +71,7 @@ Zotero plugin                          fast-reader-helper (per PDF)
      │◀─────────────────────────────────┤ {"event":"closed","page":4,"zoom":1.3}
      │  on "closed": persist position   │
      │  via Zotero's own extra-data     │  (process exits; OS reclaims all
-     │  storage (NOT zotero.sqlite      │   of Fast Reader's memory --
+     │  storage (NOT zotero.sqlite      │   of Zotero Glide's memory --
      │  directly -- see brief §3)       │   independent of Zotero, per §1)
 ```
 
@@ -83,7 +83,7 @@ built:
    (which uses Zotero's supported item-data APIs), not through the helper
    touching Zotero's database directly. This mirrors §3's "must NOT ...
    access zotero.sqlite directly" for the plugin itself.
-2. **The helper must keep working with zero IPC.** `fast-reader-helper
+2. **The helper must keep working with zero IPC.** `glide-helper
    some.pdf` run entirely by hand, with no Zotero involved, is a
    first-class use case (this is exactly how it was developed and tested
    for v0.1 -- see `docs/benchmark-methodology.md`). Any future protocol
@@ -98,7 +98,7 @@ built:
 
 ## Explicitly out of scope for "future," not just for v0.1
 
-Annotation sync (creating/editing Zotero annotations from Fast Reader) is
+Annotation sync (creating/editing Zotero annotations from Zotero Glide) is
 a different, much bigger problem than position sync -- it needs a real
 data model reconciliation story with Zotero's existing annotation storage,
 which brief §2 rules out even as a design exercise right now. Nothing in

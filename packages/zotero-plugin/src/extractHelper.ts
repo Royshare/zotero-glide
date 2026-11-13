@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Copyright (C) 2026 Zotero Fast Reader contributors
+// Copyright (C) 2026 Zotero Glide contributors
 
 /**
  * Extracts the platform helper binary to a real, executable path on disk.
@@ -11,7 +11,7 @@
  * `Subprocess.call()` cannot execute a binary that lives inside a zip.
  * A packed install must copy `bin/<platform>/<binary>` out to a writable
  * location before it can be spawned. (Confirmed live against a real
- * install: `rootURI` is `jar:file:///.../fast-reader@....xpi!/` in that
+ * install: `rootURI` is `jar:file:///.../glide@....xpi!/` in that
  * case, not a plain `file://` directory -- see STATUS.md.)
  *
  * Never trusts a file merely because it exists (an earlier version skipped

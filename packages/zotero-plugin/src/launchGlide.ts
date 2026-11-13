@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Copyright (C) 2026 Zotero Fast Reader contributors
+// Copyright (C) 2026 Zotero Glide contributors
 
 /**
- * Orchestrates "Open in Fast Reader": resolve the PDF path, resolve the
+ * Orchestrates "Open in Zotero Glide": resolve the PDF path, resolve the
  * platform helper binary, build argv, spawn. `resolveHelperPath` and
  * `spawn` are injected (real I/O, faked in tests, and -- for
  * `resolveHelperPath` -- genuinely different per install type, see
- * fastReader.ts's isPacked branch); `getPdfPathForItem`/`buildHelperArgs`
+ * glide.ts's isPacked branch); `getPdfPathForItem`/`buildHelperArgs`
  * are imported directly since they're pure functions with no Zotero
  * dependency of their own. This whole flow, including spawn failure, is
  * testable without Zotero or a real filesystem (brief §15: "argument
@@ -18,7 +18,7 @@ import { AttachmentMissingError, SpawnError } from "./errors.ts";
 import { getPdfPathForItem, type PdfLikeItem } from "./pdfAttachment.ts";
 import { buildHelperArgs, type DockGeometry } from "./buildArgs.ts";
 
-export interface LaunchFastReaderDeps {
+export interface LaunchGlideDeps {
   /** Resolves (and, for a packed install, extracts) the helper binary's real path. */
   resolveHelperPath: () => Promise<string>;
   spawn: (command: string, args: string[]) => Promise<unknown>;
@@ -27,9 +27,9 @@ export interface LaunchFastReaderDeps {
   dock?: DockGeometry;
 }
 
-export async function launchFastReader(
+export async function launchGlide(
   item: PdfLikeItem | null | undefined,
-  deps: LaunchFastReaderDeps
+  deps: LaunchGlideDeps
 ): Promise<unknown> {
   const { resolveHelperPath, spawn, page, dock } = deps;
 

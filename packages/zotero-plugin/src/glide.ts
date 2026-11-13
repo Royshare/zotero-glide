@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Copyright (C) 2026 Zotero Fast Reader contributors
+// Copyright (C) 2026 Zotero Glide contributors
 
 /**
  * Zotero-specific glue: menu registration, real filesystem/process APIs,
@@ -21,13 +21,13 @@
  *     the same primitive Zotero's own code uses internally
  *     (Zotero.Utilities.Internal.subprocess()).
  *
- * Exposed as `Zotero.FastReader` (see index.ts) so bootstrap.js's tiny
+ * Exposed as `Zotero.Glide` (see index.ts) so bootstrap.js's tiny
  * lifecycle wrapper doesn't need to know anything about this file's
  * internals -- see index.ts and addon/bootstrap.js.
  */
 
 import {
-  FastReaderError,
+  GlideError,
   UnsupportedPlatformError,
   HelperMissingError,
   AttachmentMissingError,
@@ -37,7 +37,7 @@ import {
 import { resolveHelperPath } from "./resolveHelper.ts";
 import { resolveHelperPathPacked } from "./extractHelper.ts";
 import { resolvePdfAttachment, tabTitleForItem, type PdfLikeItem } from "./pdfAttachment.ts";
-import { launchFastReader } from "./launchFastReader.ts";
+import { launchGlide } from "./launchGlide.ts";
 import { buildServeArgs, helperEnvironment, type DockGeometry } from "./buildArgs.ts";
 import type { HelperProcess } from "./helperConnection.ts";
 import { ReaderTab, TAB_TYPE, type HostActions, type ZoteroTabs } from "./readerTab.ts";
@@ -74,11 +74,11 @@ interface ZItem {
   parentItemID?: number | false;
 }
 
-const MENU_ID = "fast-reader-open";
-const MENU_ID_WINDOW = "fast-reader-open-window";
-const OBSERVER_ID = "fast-reader-tabs";
+const MENU_ID = "glide-open";
+const MENU_ID_WINDOW = "glide-open-window";
+const OBSERVER_ID = "glide-tabs";
 
-class FastReaderPlugin {
+class GlidePlugin {
   id: string | null = null;
   version: string | null = null;
   rootURI: string | null = null;
@@ -90,7 +90,7 @@ class FastReaderPlugin {
   private _originalReaderOpen: ((...a: unknown[]) => Promise<unknown>) | null = null;
   private _bypassReaderPatch = false;
   /** Set while Zotero's viewAttachment resolves a missing file, so the reader it opens is ours. */
-  private _openNextInFastReader = false;
+  private _openNextInGlide = false;
   private notifierID: string | null = null;
 
   init({ id, version, rootURI }: { id: string; version: string; rootURI: string }): void {
@@ -123,24 +123,24 @@ class FastReaderPlugin {
   }
   removeFromWindow(_window: Window): void {}
 
-  /** Default values and the pane in Zotero's Settings window (Tools > Settings > Fast Reader). */
+  /** Default values and the pane in Zotero's Settings window (Tools > Settings > Zotero Glide). */
   private _registerPrefs(): void {
     try {
       const defaults = Services.prefs.getDefaultBranch("extensions.zotero.");
-      defaults.setBoolPref("fastReader.defaultOpener", false);
-      defaults.setIntPref("fastReader.trimDelaySeconds", 2);
+      defaults.setBoolPref("glide.defaultOpener", false);
+      defaults.setIntPref("glide.trimDelaySeconds", 2);
       const panes = (Zotero as unknown as { PreferencePanes?: { register(o: Record<string, unknown>): Promise<string> } }).PreferencePanes;
       if (panes && this.id && this.rootURI) {
-        void panes.register({ pluginID: this.id, src: this.rootURI + "content/preferences.xhtml", label: "Fast Reader" });
+        void panes.register({ pluginID: this.id, src: this.rootURI + "content/preferences.xhtml", label: "Zotero Glide" });
       }
     } catch (e) {
-      Zotero.debug(`[fast-reader] could not register preferences: ${e}`);
+      Zotero.debug(`[glide] could not register preferences: ${e}`);
     }
   }
 
   private _registerMenu(): void {
     if (!Zotero.MenuManager || typeof Zotero.MenuManager.registerMenu !== "function") {
-      Zotero.debug("[fast-reader] Zotero.MenuManager unavailable; menu not registered");
+      Zotero.debug("[glide] Zotero.MenuManager unavailable; menu not registered");
       return;
     }
     const entry = (label: string, open: (item: PdfLikeItem) => Promise<void>) => ({
@@ -176,13 +176,13 @@ class FastReaderPlugin {
       menuID: MENU_ID,
       pluginID: this.id!,
       target: "main/library/item",
-      menus: [entry("Open in Fast Reader", (i) => this.openInTab(i))],
+      menus: [entry("Open in Zotero Glide", (i) => this.openInTab(i))],
     });
     this.windowMenuID = Zotero.MenuManager.registerMenu({
       menuID: MENU_ID_WINDOW,
       pluginID: this.id!,
       target: "main/library/item",
-      menus: [entry("Open in Fast Reader (separate window)", (i) => this.openInFastReader(i))],
+      menus: [entry("Open in Zotero Glide (separate window)", (i) => this.openInGlide(i))],
     });
   }
 
@@ -246,7 +246,7 @@ class FastReaderPlugin {
     if (!immediateExit.exited) {
       // Still running past the grace period -- log (not surface) any later exit.
       proc.wait().then((result) => {
-        Zotero.debug(`[fast-reader] helper exited with code ${result.exitCode}`);
+        Zotero.debug(`[glide] helper exited with code ${result.exitCode}`);
       });
     }
     return proc;
@@ -258,7 +258,7 @@ class FastReaderPlugin {
   private _resolveHelper(): Promise<string> {
       const isPacked = this.rootURI!.startsWith("jar:");
     // A real "Install Plugin From File" install keeps the .xpi packed
-    // (rootURI is jar:file:///.../fast-reader@....xpi!/); the dev
+    // (rootURI is jar:file:///.../glide@....xpi!/); the dev
     // workflow (zotero-plugin-scaffold's `serve`) installs it unpacked
     // to a real directory. loadSubScript handles both transparently
     // for *script* loading, which is why only the helper-binary path
@@ -270,7 +270,7 @@ class FastReaderPlugin {
             platform: this._hostPlatform(),
             arch: Zotero.arch,
             rootURI: this.rootURI!,
-            destDir: PathUtils.join(Zotero.DataDirectory.dir, "fast-reader-helper-bin", this.version!),
+            destDir: PathUtils.join(Zotero.DataDirectory.dir, "glide-helper-bin", this.version!),
             pathJoin: (...parts: string[]) => PathUtils.join(...parts),
             fetchBytes: (url: string) => this._fetchBytes(url),
             writeBytes: (p: string, bytes: Uint8Array) => IOUtils.write(p, bytes),
@@ -295,9 +295,9 @@ class FastReaderPlugin {
     return resolveHelper();
   }
 
-  async openInFastReader(item: PdfLikeItem): Promise<void> {
+  async openInGlide(item: PdfLikeItem): Promise<void> {
     try {
-      await launchFastReader(item, {
+      await launchGlide(item, {
         resolveHelperPath: () => this._resolveHelper(),
         spawn: (command: string, args: string[]) => this._spawn(command, args),
         dock: this._dockGeometry(),
@@ -319,7 +319,7 @@ class FastReaderPlugin {
       const win = Zotero.getMainWindow() as unknown as TabsWindow | null;
       const tabs = win?.Zotero_Tabs;
       if (!win || !tabs) {
-        throw new FastReaderError("Zotero's tab bar is not available in this window.");
+        throw new GlideError("Zotero's tab bar is not available in this window.");
       }
       const attachment = await resolvePdfAttachment(item);
       const pdfPath = attachment && typeof attachment.getFilePathAsync === "function" ? await attachment.getFilePathAsync() : null;
@@ -329,7 +329,7 @@ class FastReaderPlugin {
       if (!pdfPath) {
         // The item is a PDF attachment but its file isn't on disk (e.g. a synced file that hasn't been downloaded
         // yet). Zotero's own flow knows what to do -- download it, or offer to locate it -- so use that instead of a
-        // dead-end error; once the file exists it opens here (see _openNextInFastReader).
+        // dead-end error; once the file exists it opens here (see _openNextInGlide).
         await this._viewMissingAttachment((attachment as unknown as ZItem).id);
         return;
       }
@@ -342,7 +342,7 @@ class FastReaderPlugin {
       }
 
       const helperPath = await this._resolveHelper();
-      frameDir = PathUtils.join(PathUtils.tempDir, `zotero-fast-reader-${Zotero.Utilities.randomString(10)}`);
+      frameDir = PathUtils.join(PathUtils.tempDir, `zotero-glide-${Zotero.Utilities.randomString(10)}`);
       try {
         proc = await this._subprocess().call({
           command: helperPath,
@@ -373,25 +373,25 @@ class FastReaderPlugin {
         clearTimeout: (id) => clearTimeout(id as never),
         debug: (msg) => Zotero.debug(msg),
         requestAnimationFrame: (fn) => (win as unknown as { requestAnimationFrame(f: () => void): number }).requestAnimationFrame(fn),
-        trimDelayMs: () => parseTrimDelayMs(Zotero.Prefs.get("fastReader.trimDelaySeconds")),
+        trimDelayMs: () => parseTrimDelayMs(Zotero.Prefs.get("glide.trimDelaySeconds")),
         collectGarbage: () => {
           try {
             (win as unknown as { windowUtils: { garbageCollect(): void } }).windowUtils.garbageCollect();
           } catch (e) {
-            Zotero.debug(`[fast-reader] garbageCollect failed: ${e}`);
+            Zotero.debug(`[glide] garbageCollect failed: ${e}`);
           }
         },
         annotations: createAnnotationBackend(Zotero as never, attachment as unknown as AttachmentApi, (m) => this._notify(m)),
         notes: createNotesBackend(Zotero as never, attachment as unknown as AttachmentApi, win.document, (m) => this._notify(m)),
         host: this._hostActions(attachment as unknown as ZItem, pdfPath),
         positions: new PositionStore({
-          get: () => (Zotero.Prefs.get("fastReader.positions") as string | undefined) || undefined,
-          set: (v) => Zotero.Prefs.set("fastReader.positions", v),
+          get: () => (Zotero.Prefs.get("glide.positions") as string | undefined) || undefined,
+          set: (v) => Zotero.Prefs.set("glide.positions", v),
         }),
         positionKey: `${(attachment as unknown as AttachmentApi).libraryID}/${(attachment as unknown as AttachmentApi).key}`,
         settings: createSettingsStore({
-          get: () => (Zotero.Prefs.get("fastReader.settings") as string | undefined) || undefined,
-          set: (v) => Zotero.Prefs.set("fastReader.settings", v),
+          get: () => (Zotero.Prefs.get("glide.settings") as string | undefined) || undefined,
+          set: (v) => Zotero.Prefs.set("glide.settings", v),
         }),
         initial: loc,
         onClosed: (closed) => {
@@ -421,11 +421,11 @@ class FastReaderPlugin {
   private async _viewMissingAttachment(attachmentID: number): Promise<void> {
     const pane = Zotero.getActiveZoteroPane() as unknown as { viewAttachment(id: number): Promise<unknown> } | undefined;
     if (!pane) throw new AttachmentMissingError(String(attachmentID));
-    this._openNextInFastReader = true;
+    this._openNextInGlide = true;
     try {
       await pane.viewAttachment(attachmentID);
     } finally {
-      this._openNextInFastReader = false;
+      this._openNextInGlide = false;
     }
   }
 
@@ -433,12 +433,12 @@ class FastReaderPlugin {
   private _notify(message: string): void {
     try {
       const pw = new Zotero.ProgressWindow({ closeOnClick: true });
-      pw.changeHeadline("Fast Reader");
+      pw.changeHeadline("Zotero Glide");
       pw.addDescription(message);
       pw.show();
       pw.startCloseTimer(4500);
     } catch (e) {
-      Zotero.debug(`[fast-reader] notify failed: ${e}`);
+      Zotero.debug(`[glide] notify failed: ${e}`);
     }
   }
 
@@ -462,7 +462,7 @@ class FastReaderPlugin {
       openInZoteroReader: (pageIndex) => {
         this._bypassReaderPatch = true;
         Promise.resolve(Zotero.Reader.open(att.id, { pageIndex }, { allowDuplicate: true }))
-          .catch((e: unknown) => Zotero.debug(`[fast-reader] open in Zotero reader failed: ${e}`))
+          .catch((e: unknown) => Zotero.debug(`[glide] open in Zotero reader failed: ${e}`))
           .finally(() => (this._bypassReaderPatch = false));
       },
       copyCitation: async () => {
@@ -511,8 +511,8 @@ class FastReaderPlugin {
   }
 
   /**
-   * Optional: make "Fast Reader" what Zotero opens for PDFs (double-click, `zotero://open-pdf` links, note
-   * citations) by wrapping `Zotero.Reader.open` while the pref `fastReader.defaultOpener` is on. Zotero's own
+   * Optional: make "Zotero Glide" what Zotero opens for PDFs (double-click, `zotero://open-pdf` links, note
+   * citations) by wrapping `Zotero.Reader.open` while the pref `glide.defaultOpener` is on. Zotero's own
    * tab-restore calls (they pass `tabID`) and "open in window" always go to Zotero's reader, as does
    * "Open in Zotero's own reader" in our menu.
    */
@@ -524,7 +524,7 @@ class FastReaderPlugin {
     R.open = async (...args: unknown[]) => {
       const [itemID, location, options] = args as [unknown, unknown, { tabID?: string; openInWindow?: boolean } | undefined];
       try {
-        if (!this._bypassReaderPatch && (this._openNextInFastReader || Zotero.Prefs.get("fastReader.defaultOpener")) && !options?.tabID && !options?.openInWindow) {
+        if (!this._bypassReaderPatch && (this._openNextInGlide || Zotero.Prefs.get("glide.defaultOpener")) && !options?.tabID && !options?.openInWindow) {
           const item = Zotero.Items.get(itemID as number) as unknown as PdfLikeItem | undefined;
           if (item && typeof item.isPDFAttachment === "function" && item.isPDFAttachment()) {
             await this.openInTab(item, readerLocation(location));
@@ -533,7 +533,7 @@ class FastReaderPlugin {
           }
         }
       } catch (e) {
-        Zotero.debug(`[fast-reader] default-opener failed, falling back to Zotero's reader: ${e}`);
+        Zotero.debug(`[glide] default-opener failed, falling back to Zotero's reader: ${e}`);
       }
       return original(...args);
     };
@@ -569,7 +569,7 @@ class FastReaderPlugin {
    * restore -- and the no-op hook stays only as a last resort. See
    * sessionState.ts.
    *
-   * Known limit: a session file already containing a `fastreader` tab (only
+   * Known limit: a session file already containing a `glide` tab (only
    * possible from a development build of this feature) is not repaired by
    * the plugin; delete the tab entry from the profile's session.json.
    */
@@ -637,7 +637,7 @@ class FastReaderPlugin {
 
   private _rootDirFromURI(): string {
     // Only valid for an unpacked (plain file://) install -- see the
-    // isPacked branch in openInFastReader above.
+    // isPacked branch in openInGlide above.
     //
     // Zotero.File.pathToFile() takes a filesystem *path*; on Zotero 11 it
     // throws "Unexpected path value 'file:///...'" when handed the
@@ -659,7 +659,7 @@ class FastReaderPlugin {
 
   private _showLaunchError(error: unknown): void {
     const stack = error instanceof Error ? error.stack : String(error);
-    Zotero.debug(`[fast-reader] launch failed: ${stack}`);
+    Zotero.debug(`[glide] launch failed: ${stack}`);
     const summary = this._summarizeError(error);
     // Services.prompt's nsIPrompt-derived signature wants
     // mozIDOMWindowProxy; Zotero.getMainWindow()'s real return value
@@ -673,7 +673,7 @@ class FastReaderPlugin {
       Services.prompt.BUTTON_POS_1! * Services.prompt.BUTTON_TITLE_IS_STRING!;
     const pressed = Services.prompt.confirmEx(
       win,
-      "Fast Reader could not be started",
+      "Zotero Glide could not be started",
       summary,
       buttonFlags,
       "",
@@ -683,31 +683,31 @@ class FastReaderPlugin {
       { value: false }
     );
     if (pressed === 1) {
-      Services.prompt.alert(win, "Fast Reader — Details", stack ?? String(error));
+      Services.prompt.alert(win, "Zotero Glide — Details", stack ?? String(error));
     }
   }
 
   private _summarizeError(error: unknown): string {
     if (error instanceof HelperMissingError) {
-      return "The Fast Reader helper program is missing from this plugin's installation.";
+      return "The Zotero Glide helper program is missing from this plugin's installation.";
     }
     if (error instanceof AttachmentMissingError) {
       return "The PDF attachment's file could not be found on disk.";
     }
     if (error instanceof UnsupportedPlatformError) {
-      return `Fast Reader does not support this platform (${error.platform}/${error.arch}).`;
+      return `Zotero Glide does not support this platform (${error.platform}/${error.arch}).`;
     }
     if (error instanceof SpawnError) {
-      return "The Fast Reader process failed to launch.";
+      return "The Zotero Glide process failed to launch.";
     }
     if (error instanceof ReaderCrashedError) {
-      return `Fast Reader started but exited immediately (code ${error.exitCode}).`;
+      return `Zotero Glide started but exited immediately (code ${error.exitCode}).`;
     }
-    if (error instanceof FastReaderError) {
+    if (error instanceof GlideError) {
       return error.message;
     }
-    return "An unexpected error occurred while starting Fast Reader.";
+    return "An unexpected error occurred while starting Zotero Glide.";
   }
 }
 
-export const FastReader = new FastReaderPlugin();
+export const Glide = new GlidePlugin();

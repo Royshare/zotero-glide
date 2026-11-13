@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 Zotero Fast Reader contributors
+# Copyright (C) 2026 Zotero Glide contributors
 """Adds the SPDX license + copyright header to every source file that lacks one (idempotent).
   python3 scripts/add-spdx.py          # fix
   python3 scripts/add-spdx.py --check  # exit 1 listing files without a header (used by CI)
@@ -9,7 +9,7 @@ import os, subprocess, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TAG = "SPDX-License-Identifier: AGPL-3.0-or-later"
-OWNER = "Copyright (C) 2026 Zotero Fast Reader contributors"
+OWNER = "Copyright (C) 2026 Zotero Glide contributors"
 STYLES = {".rs": "//", ".ts": "//", ".mts": "//", ".js": "//", ".mjs": "//", ".py": "#", ".sh": "#", ".yml": "#"}
 SKIP_NAMES = {"i10n.d.ts"}  # generated
 

@@ -2,8 +2,8 @@
 packages/reader-helper/target/
 packages/reader-helper/fixtures/*.pdf
 benchmarks/fixtures/*.pdf
-packages/zotero-plugin/addon/bin/*/fast-reader-helper
-packages/zotero-plugin/addon/bin/*/fast-reader-helper.exe
+packages/zotero-plugin/addon/bin/*/glide-helper
+packages/zotero-plugin/addon/bin/*/glide-helper.exe
 *.xpi
 node_modules/
 .DS_Store

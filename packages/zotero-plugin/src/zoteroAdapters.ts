@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Copyright (C) 2026 Zotero Fast Reader contributors
+// Copyright (C) 2026 Zotero Glide contributors
 
 /**
  * The reader's connection to Zotero: where annotations live (Zotero's database, via
@@ -178,7 +178,7 @@ export function createAnnotationBackend(Z: ZoteroAnnotationApi, att: AttachmentA
       }
     },
     subscribe(cb) {
-      const id = `fast-reader-annotations-${att.id}-${++observerSeq}`;
+      const id = `glide-annotations-${att.id}-${++observerSeq}`;
       let timer: ReturnType<typeof setTimeout> | null = null;
       const fire = () => {
         if (timer) clearTimeout(timer);
@@ -373,7 +373,7 @@ export function createNotesBackend(Z: ZoteroNotesApi, att: NotesAttachmentApi, d
       return pageLinkHtml(label, { groupID: lib?.groupID ?? 0, key: att.key, page, annotationKey });
     },
     subscribe(cb) {
-      const id = `fast-reader-notes-${att.id}-${++observerSeq}`;
+      const id = `glide-notes-${att.id}-${++observerSeq}`;
       let timer: ReturnType<typeof setTimeout> | null = null;
       const fire = () => {
         if (timer) clearTimeout(timer);
