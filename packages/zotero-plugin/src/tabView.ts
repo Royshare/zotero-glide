@@ -433,6 +433,8 @@ li[data-open=true]>.fr-ol-row .fr-twisty svg{transform:rotate(90deg)}
 .fr-menu hr{border:none;border-top:1px solid var(--fr-border);margin:4px 0}
 .fr-reading{position:absolute;inset:0;overflow:auto;background:var(--fr-bg);display:none;z-index:5}
 .fr-root[data-reading=true] .fr-reading{display:block}
+/* the reading view scrolls on its own: the hidden page stack must not show a second scrollbar (its scroll position is kept) */
+.fr-root[data-reading=true] .fr-scroller{overflow:hidden;scrollbar-gutter:auto}
 .fr-reading article{max-width:42em;margin:0 auto;padding:24px 20px 80px;font:var(--fr-reading-size,17px)/1.65 Georgia,serif}
 .fr-reading h6{margin:28px 0 8px;font:600 11px sans-serif;letter-spacing:.06em;text-transform:uppercase;opacity:.5}
 .fr-reading p{margin:0 0 1em}
