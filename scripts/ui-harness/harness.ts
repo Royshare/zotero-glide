@@ -3,9 +3,10 @@
 
 /// <reference lib="dom" />
 // Browser side of the UI harness (see server.mjs): the real ReaderTab with Zotero stood in by in-memory fakes.
-import { ReaderTab, DEFAULT_SETTINGS, type AnnotationRecord, type GlobalSettings, type ReaderTabDeps } from "../../packages/zotero-plugin/src/readerTab.ts";
+import { ReaderTab, DEFAULT_SETTINGS, type AnnotationRecord, type GlobalSettings, type NotesBackend, type NoteEditorHandle, type ReaderTabDeps } from "../../packages/zotero-plugin/src/readerTab.ts";
 import { PositionStore } from "../../packages/zotero-plugin/src/positionStore.ts";
 import { buildMarkup, buildNote, type AnnotationDraft } from "../../packages/zotero-plugin/src/annotations.ts";
+import { noteSummary, pageLinkHtml } from "../../packages/zotero-plugin/src/notes.ts";
 import type { HelperProcess } from "../../packages/zotero-plugin/src/helperConnection.ts";
 
 const params = new URLSearchParams(location.search);
@@ -51,6 +52,7 @@ async function main() {
       listeners.forEach((l) => l());
     },
     createNote: async () => toast("(harness) would create a Zotero note"),
+    dragData: (keys: string[]) => JSON.stringify(keys.map((k) => ({ id: k }))),
     subscribe: (cb: () => void) => (listeners.add(cb), () => listeners.delete(cb)),
   };
   void buildMarkup; void buildNote;
@@ -60,6 +62,58 @@ async function main() {
     t.textContent = m;
     t.style.display = "block";
     setTimeout(() => (t.style.display = "none"), 3000);
+  };
+
+  // ---- in-memory notes: a contenteditable stands in for Zotero's note-editor (?standalone=1 = a PDF with no parent item)
+  const noteStore: Array<{ id: number; html: string; modified: string }> = [
+    { id: 1, html: "<h1>Reading notes</h1><p>Main claim is in section 2.</p>", modified: new Date(Date.now() - 3600_000).toISOString().replace("T", " ").slice(0, 19) },
+    { id: 2, html: "<p>Questions for the group meeting</p><p>What is the baseline?</p>", modified: "2026-10-01 09:00:00" },
+  ];
+  const noteListeners = new Set<() => void>();
+  const fireNotes = () => noteListeners.forEach((l) => l());
+  const standalone = params.get("standalone") === "1";
+  const notes: NotesBackend = {
+    available: !standalone,
+    parentTitle: () => "Attention Is All You Need",
+    list: () => noteStore.map((n) => noteSummary({ id: n.id, key: `NOTE${n.id}`.padEnd(8, "X"), dateModified: n.modified, getNote: () => n.html })).sort((a, b) => (a.modified < b.modified ? 1 : -1)),
+    create: async () => {
+      const id = Math.max(0, ...noteStore.map((n) => n.id)) + 1;
+      noteStore.push({ id, html: "", modified: new Date().toISOString().replace("T", " ").slice(0, 19) });
+      fireNotes();
+      return id;
+    },
+    createFromAnnotations: async (keys) => {
+      const id = Math.max(0, ...noteStore.map((n) => n.id)) + 1;
+      noteStore.push({ id, html: keys.map((k) => `<blockquote>${records.find((r) => r.key === k)?.text ?? k}</blockquote>`).join(""), modified: new Date().toISOString().replace("T", " ").slice(0, 19) });
+      fireNotes();
+      return id;
+    },
+    trash: async (id) => {
+      noteStore.splice(noteStore.findIndex((n) => n.id === id), 1);
+      fireNotes();
+    },
+    has: (id) => noteStore.some((n) => n.id === id),
+    showInLibrary: (id) => toast(`(harness) show note ${id} in library`),
+    pageLink: (label, page, annotationKey) => pageLinkHtml(label, { groupID: 0, key: "HARNPDF1", page, annotationKey }),
+    subscribe: (cb) => (noteListeners.add(cb), () => noteListeners.delete(cb)),
+    mountEditor: async (container, id, opts) => {
+      const n = noteStore.find((x) => x.id === id)!;
+      const ed = document.createElement("div");
+      ed.contentEditable = "true";
+      ed.style.cssText = "flex:1;padding:10px;overflow:auto;outline:none;min-width:0";
+      ed.innerHTML = n.html;
+      ed.addEventListener("input", () => { n.html = ed.innerHTML; n.modified = new Date().toISOString().replace("T", " ").slice(0, 19); fireNotes(); });
+      container.append(ed);
+      void opts;
+      const append = async (html: string) => { ed.insertAdjacentHTML("beforeend", html); ed.dispatchEvent(new Event("input")); return true; };
+      const handle: NoteEditorHandle = {
+        insertAnnotations: (keys) => append(keys.map((k) => `<blockquote>${records.find((r) => r.key === k)?.text ?? k}</blockquote>`).join("")),
+        insertHTML: append,
+        focus: () => ed.focus(),
+        destroy: () => ed.remove(),
+      };
+      return handle;
+    },
   };
 
   let settings: GlobalSettings = { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem("fr-harness-settings") ?? "{}") };
@@ -79,6 +133,7 @@ async function main() {
     requestAnimationFrame: (fn) => window.requestAnimationFrame(fn),
     debug: (m) => console.log(m), collectGarbage() {}, onClosed() {},
     annotations,
+    notes,
     host: {
       copyText: (t) => { console.log("COPY:", t); toast(`Copied ${t.length} characters`); void navigator.clipboard?.writeText(t).catch(() => {}); },
       openURL: (u) => toast(`(harness) open ${u}`),

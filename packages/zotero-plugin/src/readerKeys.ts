@@ -32,6 +32,7 @@ export type ReaderAction =
   | { type: "copy" }
   | { type: "selectAll" }
   | { type: "back" }
+  | { type: "toggleNotes" }
   | { type: "escape" };
 
 export const ZOOM_STEP = 1.15;
@@ -81,6 +82,8 @@ export function keyToAction(ev: KeyLike, ctx: KeyContext): ReaderAction | null {
       return { type: "zoom", factor: ZOOM_STEP };
     case "-":
       return { type: "zoom", factor: 1 / ZOOM_STEP };
+    case "n":
+      return { type: "toggleNotes" };
     case "1":
       return { type: "fit", mode: "width" };
     case "2":

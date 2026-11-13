@@ -10,7 +10,7 @@ test("parseSettings falls back field by field on junk, and clamps the reading si
   assert.deepEqual(parseSettings("{nope"), d);
   assert.deepEqual(parseSettings("[]"), d);
   const s = parseSettings(JSON.stringify({ theme: "dark", sidebarOpen: true, sidebarTab: "outline", readingFontSize: 99, color: "#aaaaaa" }));
-  assert.deepEqual(s, { theme: "dark", sidebarOpen: true, sidebarWidth: 236, sidebarTab: "outline", readingFontSize: 32, color: "#aaaaaa" });
+  assert.deepEqual(s, { theme: "dark", sidebarOpen: true, sidebarWidth: 236, sidebarTab: "outline", readingFontSize: 32, color: "#aaaaaa", notesOpen: false, notesWidth: 340 });
   const bad = parseSettings(JSON.stringify({ theme: "neon", sidebarOpen: "yes", sidebarTab: 3, readingFontSize: "big", color: "red" }));
   assert.deepEqual(bad, d);
   assert.equal(parseSettings(JSON.stringify({ readingFontSize: 2 })).readingFontSize, 12);
@@ -55,4 +55,13 @@ test("annotationToRecord keeps highlight/underline/note and skips what this read
   assert.equal(annotationToRecord({ ...base, annotationPosition: "garbage" }), null);
   assert.equal(annotationToRecord({ ...base, annotationColor: undefined })?.color, "#ffd400");
   assert.equal(annotationToRecord({ ...base, annotationPageLabel: undefined })?.pageLabel, "3", "falls back to page index + 1");
+});
+
+test("parseSettings keeps the notes pane state and clamps its width", () => {
+  const s = parseSettings(JSON.stringify({ notesOpen: true, notesWidth: 400 }));
+  assert.equal(s.notesOpen, true);
+  assert.equal(s.notesWidth, 400);
+  assert.equal(parseSettings(JSON.stringify({ notesWidth: 9999 })).notesWidth, 720);
+  assert.equal(parseSettings(JSON.stringify({ notesWidth: 5 })).notesWidth, 260);
+  assert.equal(parseSettings(JSON.stringify({ notesOpen: "yes" })).notesOpen, false);
 });

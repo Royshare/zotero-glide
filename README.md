@@ -32,7 +32,9 @@ that hypothesis so far, and what hasn't.
   here are stored in **Zotero** (the same way Zotero's own reader stores them), so
   they sync and appear in both readers. The PDF file itself is never modified.
 - Not a general-purpose PDF application. No PDF editing, no cloud sync, no
-  AI features, no note-taking UI.
+  AI features, no note format of its own (notes are ordinary Zotero child notes,
+  edited with Zotero's own note editor in a side pane -- see
+  [`docs/adr/004-notes-pane.md`](docs/adr/004-notes-pane.md)).
 - Not a fork or monkey-patch of Zotero's reader internals -- the plugin
   never touches Zotero's existing reader code, and never touches
   `zotero.sqlite` directly.

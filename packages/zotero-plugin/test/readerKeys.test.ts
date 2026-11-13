@@ -54,3 +54,9 @@ test("Alt+Left (and Cmd+[ on a Mac) go back; plain Left still turns the page", (
   assert.deepEqual(keyToAction(key("[", { metaKey: true }), { isMac: true }), { type: "back" });
   assert.deepEqual(keyToAction(key("ArrowLeft"), { isMac: false }), { type: "prev" });
 });
+
+test("N toggles the notes pane, but never with a modifier (Cmd/Ctrl+N is Zotero's New Item)", () => {
+  assert.deepEqual(keyToAction(key("n"), mac), { type: "toggleNotes" });
+  assert.equal(keyToAction(key("n", { metaKey: true }), mac), null);
+  assert.equal(keyToAction(key("n", { ctrlKey: true }), { isMac: false }), null);
+});

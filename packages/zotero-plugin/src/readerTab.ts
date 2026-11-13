@@ -22,6 +22,7 @@ import {
   scrollTopForAnchor, viewSize, viewToPage, visibleRange, type Layout, type ScrollAnchor, type ViewSettings,
 } from "./layout.ts";
 import type { PositionStore, SavedPosition } from "./positionStore.ts";
+import type { NoteSummary } from "./notes.ts";
 import type { FrameEvent, HelperEvent, LinkData, OutlineNode, PageInfo, Rect, Rotation } from "./protocol.ts";
 import { keyToAction } from "./readerKeys.ts";
 import {
@@ -112,7 +113,46 @@ export interface AnnotationBackend {
   update(key: string, patch: { color?: string; comment?: string }): Promise<void>;
   remove(key: string): Promise<void>;
   createNote(keys: string[]): Promise<void>;
+  /** The `zotero/annotation` drag payload (Zotero's annotation JSON) for these annotations, or null. */
+  dragData(keys: string[]): string | null;
   /** Calls back when annotations of this attachment change (also from Zotero's own reader). Returns unsubscribe. */
+  subscribe(cb: () => void): () => void;
+}
+
+/** A Zotero note editor mounted in the notes pane. */
+export interface NoteEditorHandle {
+  /** Inserts annotations (by key) into the note at the cursor, the way Zotero's own reader does. */
+  insertAnnotations(keys: string[]): Promise<boolean>;
+  /** Inserts HTML at the cursor. */
+  insertHTML(html: string): Promise<boolean>;
+  focus(): void;
+  destroy(): void;
+}
+
+/** Zotero-side note operations for the open PDF's parent item (implemented in zoteroAdapters.ts). */
+export interface NotesBackend {
+  /** Notes are child notes of the PDF's parent item: false for a standalone PDF. */
+  readonly available: boolean;
+  /** The parent item's title, shown at the top of the pane. */
+  parentTitle(): string;
+  /** Child notes, newest first. */
+  list(): NoteSummary[];
+  create(): Promise<number | null>;
+  /** A new child note holding these annotations. */
+  createFromAnnotations(keys: string[]): Promise<number | null>;
+  /** Moves a note to Zotero's trash (it can be restored there). */
+  trash(id: number): Promise<void>;
+  showInLibrary(id: number): void;
+  /**
+   * Mounts Zotero's note editor for a note. `onReturn` is the editor's back button; `onOpenAnnotation` is a click
+   * on an annotation citation that points at this PDF (other documents are opened by Zotero).
+   */
+  mountEditor(container: HTMLElement, id: number, opts: { onReturn(): void; onOpenAnnotation(pageIndex: number, annotationKey?: string): void }): Promise<NoteEditorHandle | null>;
+  /** Whether this note still exists (not trashed) and belongs to the PDF's parent item. */
+  has(id: number): boolean;
+  /** HTML for a link to a page (and optionally an annotation) of this PDF. */
+  pageLink(label: string, page: string, annotationKey?: string): string;
+  /** Calls back when this item's notes change. Returns unsubscribe. */
   subscribe(cb: () => void): () => void;
 }
 
@@ -141,9 +181,11 @@ export interface GlobalSettings {
   sidebarTab: SidebarTab;
   readingFontSize: number;
   color: string;
+  notesOpen: boolean;
+  notesWidth: number;
 }
 
-export const DEFAULT_SETTINGS: GlobalSettings = { theme: "auto", sidebarOpen: false, sidebarWidth: 236, sidebarTab: "thumbnails", readingFontSize: 17, color: ANNOTATION_COLORS[0]!.hex };
+export const DEFAULT_SETTINGS: GlobalSettings = { theme: "auto", sidebarOpen: false, sidebarWidth: 236, sidebarTab: "thumbnails", readingFontSize: 17, color: ANNOTATION_COLORS[0]!.hex, notesOpen: false, notesWidth: 340 };
 
 export interface ReaderTabDeps {
   tabs: ZoteroTabs;
@@ -169,6 +211,7 @@ export interface ReaderTabDeps {
   onClosed(tab: ReaderTab): void;
 
   annotations: AnnotationBackend;
+  notes: NotesBackend;
   host: HostActions;
   positions: PositionStore;
   /** "libraryID/ATTACHMENTKEY" */
@@ -205,6 +248,14 @@ export class ReaderTab {
   private readonly view: ReaderView;
   private readonly conn: HelperConnection;
   private readonly unsubscribe: () => void;
+  private readonly notesUnsubscribe: () => void;
+  /** Zotero's note editor, while a note is open in the pane. */
+  private noteEditor: NoteEditorHandle | null = null;
+  private noteID: number | null = null;
+  /** the note the pane had open when it was closed, reopened with the pane */
+  private lastNoteID: number | null = null;
+  /** bumped whenever the editor is released, so a mount that finishes late knows to discard itself */
+  private noteToken = 0;
 
   // lifecycle
   private active = true;
@@ -321,6 +372,18 @@ export class ReaderTab {
         commentAnnotation: (k, text) => void this.d.annotations.update(k, { comment: text }),
         annotationMenu: (k, x, y) => this.showAnnotationMenu(k, x, y),
         outlineClick: (n) => this.onOutlineClick(n),
+        toggleNotes: () => this.setNotes(!this.view.notesOpen),
+        notesResized: (width) => this.d.settings.set({ notesWidth: width }),
+        noteOpen: (id) => void this.openNote(id),
+        noteNew: () => void this.newNote(),
+        noteBack: () => this.closeNote(),
+        noteMenu: (id, x, y) => this.showNoteMenu(id, x, y),
+        noteInsertPageLink: () => void this.insertPageLink(),
+        noteShowInLibrary: () => {
+          if (this.noteID !== null) this.d.notes.showInLibrary(this.noteID);
+        },
+        annotationToNote: (k, x, y) => void this.addToNote([k], x, y),
+        annotationDragData: (k) => this.d.annotations.dragData([k]),
       },
       deps.isMac
     );
@@ -331,6 +394,9 @@ export class ReaderTab {
     this.view.setSidebarOpen(s.sidebarOpen);
     this.view.setSidebarWidth(s.sidebarWidth);
     this.view.setSidebarTab(s.sidebarTab);
+    this.view.setNotesWidth(s.notesWidth);
+    this.view.setNotesOpen(s.notesOpen);
+    if (s.notesOpen) this.showNotesList();
     this.view.setMessage("Opening…");
 
     this.conn = new HelperConnection(deps.proc, {
@@ -344,6 +410,7 @@ export class ReaderTab {
     });
     this.conn.start();
     this.unsubscribe = deps.annotations.subscribe(() => this.refreshAnnotations());
+    this.notesUnsubscribe = deps.notes.available ? deps.notes.subscribe(() => this.onNotesChanged()) : () => {};
     this.view.focus();
   }
 
@@ -1648,7 +1715,7 @@ export class ReaderTab {
       },
       toNote: () => {
         this.view.hidePopups();
-        void this.d.annotations.createNote([a.key]);
+        void this.addToNote([a.key], clientX, clientY);
       },
     });
   }
@@ -1678,7 +1745,7 @@ export class ReaderTab {
       ...ANNOTATION_COLORS.map((c): MenuItem => ({ label: c.name, swatch: c.hex, checked: c.hex.toLowerCase() === a.color.toLowerCase(), run: () => void this.d.annotations.update(key, { color: c.hex }) })),
       { separator: true, label: "" },
       { label: "Copy text", icon: "copy", disabled: !a.text || a.kind === "image", run: () => this.d.host.copyText(a.text) },
-      { label: "Create Zotero note", icon: "file-text", run: () => void this.d.annotations.createNote([key]) },
+      { label: "Add to note…", icon: "notebook-pen", run: () => void this.addToNote([key], x, y) },
       { separator: true, label: "" },
       { label: "Delete annotation", icon: "trash", run: () => void this.d.annotations.remove(key) },
     ];
@@ -1752,6 +1819,147 @@ export class ReaderTab {
     this.view.setSearchStatus("");
     for (const p of pages) this.refreshOverlaysFor(p, p); // including pages that are scrolled out of view
     this.refreshAllOverlays();
+  }
+
+  // ======================================================================= notes
+  /** Opens or closes the right-hand notes pane. Reopening restores the note that was open. */
+  private setNotes(open: boolean, restore = true): void {
+    if (open === this.view.notesOpen) return;
+    this.view.setNotesOpen(open);
+    this.d.settings.set({ notesOpen: open });
+    if (open) {
+      if (restore && this.lastNoteID !== null && this.d.notes.has(this.lastNoteID)) void this.openNote(this.lastNoteID);
+      else this.showNotesList();
+    } else {
+      this.releaseNote(); // flushes the editor's pending save; lastNoteID is kept for next time
+    }
+    this.view.sendViewport();
+    this.d.setTimeout(() => this.relayout(), 30);
+    if (!open) this.view.focus();
+  }
+
+  private showNotesList(): void {
+    this.view.setNotesMode("list");
+    this.renderNotesList();
+  }
+
+  private renderNotesList(): void {
+    const n = this.d.notes;
+    this.view.renderNotesList({ available: n.available, parentTitle: n.parentTitle(), notes: n.list() });
+  }
+
+  /** Zotero says this item's notes changed (here, in its own windows, or by sync). */
+  private onNotesChanged(): void {
+    if (this.disposed || !this.view.notesOpen) return;
+    if (this.noteID === null) return this.renderNotesList();
+    if (!this.d.notes.has(this.noteID)) return this.closeNote(); // trashed or deleted elsewhere
+    const cur = this.d.notes.list().find((n) => n.id === this.noteID);
+    if (cur) this.view.setNotesTitle(cur.title);
+  }
+
+  private releaseNote(): void {
+    this.noteToken++;
+    this.noteEditor?.destroy();
+    this.noteEditor = null;
+    this.noteID = null;
+  }
+
+  /** Back to the list (the editor's back arrow, or the note went away). */
+  private closeNote(): void {
+    this.releaseNote();
+    this.lastNoteID = null;
+    this.showNotesList();
+  }
+
+  /** Opens a note in Zotero's editor. Resolves to its handle, or null if the editor couldn't be loaded. */
+  private async openNote(id: number): Promise<NoteEditorHandle | null> {
+    this.releaseNote();
+    const token = this.noteToken;
+    this.noteID = id;
+    this.lastNoteID = id;
+    this.view.setNotesMode("editor", this.d.notes.list().find((n) => n.id === id)?.title ?? "Note");
+    this.view.setNotesEditorMessage("Loading note…");
+    const handle = await this.d.notes
+      .mountEditor(this.view.notesEditorHost, id, { onReturn: () => this.closeNote(), onOpenAnnotation: (page) => this.goToPage(page) })
+      .catch((e: unknown) => {
+        this.d.debug(`[fast-reader] note editor failed: ${e}`);
+        return null;
+      });
+    if (token !== this.noteToken || this.disposed) {
+      handle?.destroy(); // superseded while loading
+      return null;
+    }
+    if (!handle) {
+      this.view.setNotesEditorMessage("Zotero’s note editor couldn’t be loaded here.", { label: "Open in Zotero", run: () => this.d.notes.showInLibrary(id) });
+      return null;
+    }
+    this.noteEditor = handle;
+    this.view.setNotesEditorMessage(null);
+    return handle;
+  }
+
+  private async newNote(): Promise<void> {
+    if (!this.d.notes.available) return this.d.host.notify("Notes need a library item: this PDF has no parent item.");
+    this.setNotes(true, false);
+    const id = await this.d.notes.create();
+    if (id === null) return this.d.host.notify("Could not create a note.");
+    (await this.openNote(id))?.focus();
+  }
+
+  private showNoteMenu(id: number, x: number, y: number): void {
+    this.view.showMenuAt(x, y, [
+      { label: "Open", icon: "notebook-pen", run: () => void this.openNote(id) },
+      { label: "Show in library", icon: "external-link", run: () => this.d.notes.showInLibrary(id) },
+      { separator: true, label: "" },
+      { label: "Move to Trash", icon: "trash", run: () => void this.d.notes.trash(id) },
+    ]);
+  }
+
+  /** Inserts a link to the page being read into the open note (`zotero://open-pdf`, which Zotero understands). */
+  private async insertPageLink(): Promise<void> {
+    if (!this.noteEditor) return;
+    const page = Math.min(this.pageNow, Math.max(0, this.pages.length - 1)) + 1;
+    const title = (this.d.notes.parentTitle() || this.d.title).slice(0, 80);
+    const ok = await this.noteEditor.insertHTML(this.d.notes.pageLink(`${title}, p. ${page}`, String(page)));
+    this.d.host.notify(ok ? `Inserted a link to page ${page}.` : "Could not insert the link.");
+  }
+
+  /**
+   * "Add to note": straight into the note that is open; otherwise ask which (a new one, or one of the item's
+   * notes) at the click. A PDF with no parent item can't have notes here, so Zotero makes a standalone one.
+   */
+  private async addToNote(keys: string[], x: number, y: number): Promise<void> {
+    const own = keys.filter((k) => this.annotations.some((a) => a.key === k && !a.external));
+    if (!own.length) return;
+    if (!this.d.notes.available) return void this.d.annotations.createNote(own);
+    if (this.noteEditor) return void this.insertInto(this.noteEditor, own);
+    const notes = this.d.notes.list();
+    this.view.showMenuAt(x, y, [
+      { label: "New note", icon: "plus", run: () => void this.addToNewNote(own) },
+      ...(notes.length ? [{ separator: true, label: "" } as MenuItem] : []),
+      ...notes.slice(0, 12).map((n): MenuItem => ({ label: n.title, icon: "file-text", run: () => void this.addToExistingNote(n.id, own) })),
+    ]);
+  }
+
+  private async insertInto(editor: NoteEditorHandle, keys: string[]): Promise<void> {
+    const ok = await editor.insertAnnotations(keys).catch(() => false);
+    this.d.host.notify(ok ? "Added to note." : "Could not add to the note.");
+  }
+
+  private async addToNewNote(keys: string[]): Promise<void> {
+    if (!keys.length) return;
+    if (!this.d.notes.available) return void this.d.annotations.createNote(keys);
+    this.setNotes(true, false);
+    const id = await this.d.notes.createFromAnnotations(keys);
+    if (id === null) return this.d.host.notify("Could not create a note.");
+    await this.openNote(id);
+    this.d.host.notify("Note created from annotations.");
+  }
+
+  private async addToExistingNote(id: number, keys: string[]): Promise<void> {
+    this.setNotes(true, false);
+    const editor = await this.openNote(id);
+    if (editor) await this.insertInto(editor, keys);
   }
 
   // ======================================================================= sidebar
@@ -1874,7 +2082,8 @@ export class ReaderTab {
       { separator: true, label: "" },
       { label: "Select all text", run: () => this.selectAll() },
       { label: "Copy citation", icon: "quote", run: () => void this.d.host.copyCitation() },
-      { label: "Create Zotero note from all annotations", icon: "file-text", disabled: !this.annotations.length, run: () => void this.d.annotations.createNote(this.annotations.map((a) => a.key)) },
+      { label: this.view.notesOpen ? "Hide notes" : "Show notes", icon: "notebook-pen", run: () => this.setNotes(!this.view.notesOpen) },
+      { label: "Create note from all annotations", icon: "file-text", disabled: !this.annotations.some((a) => !a.external), run: () => void this.addToNewNote(this.annotations.filter((a) => !a.external).map((a) => a.key)) },
       { separator: true, label: "" },
       { label: "Export PDF with annotations…", icon: "download", run: () => void this.exportAnnotated() },
       { label: "Open in system viewer", icon: "external-link", run: () => this.d.host.openExternally() },
@@ -1925,6 +2134,8 @@ export class ReaderTab {
         return this.selectAll();
       case "back":
         return this.goBack();
+      case "toggleNotes":
+        return this.setNotes(!this.view.notesOpen);
       case "escape":
         if (this.view.readingMode) return this.setReadingMode(false);
         this.clearSelection();
@@ -1976,6 +2187,8 @@ export class ReaderTab {
     this.disposed = true;
     for (const t of [this.trimTimer, this.gcTimer, this.renderTimer, this.saveTimer, this.readingTimer]) if (t !== null) this.d.clearTimeout(t);
     this.unsubscribe();
+    this.notesUnsubscribe();
+    this.releaseNote(); // saves an edit still pending in the editor before the tab goes
     void this.conn
       .close()
       .catch(() => {})

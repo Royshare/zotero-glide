@@ -12,6 +12,13 @@ landed so far: the plugin's TypeScript migration, and docked-window UX
 `docs/adr/001-reader-helper-stack.md` and this file's "v0.2" section
 below for what's next.
 
+## Notes pane (v1 + v1.1) -- branch `feat/item-notes-sidebar`
+
+A right-hand pane edits the PDF parent item's child notes with Zotero's own note editor, with Add to note, drag,
+page links and click-to-jump. Design, limits and what is verified: [`docs/adr/004-notes-pane.md`](docs/adr/004-notes-pane.md).
+172 unit tests pass and `tsc` is clean; the pane was exercised in the browser harness. **Not yet run in a real
+Zotero**: do the live checks listed in the ADR before merging.
+
 ## v0.3: the reader is now a Zotero tab
 
 "Open in Fast Reader" opens the PDF as a tab in Zotero's own tab bar. Design
