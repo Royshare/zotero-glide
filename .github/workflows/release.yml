@@ -43,10 +43,11 @@ jobs:
         with:
           workspaces: packages/reader-helper
       - run: python3 scripts/gen_fixtures.py
+      # only the lib/main test harnesses and the shipped binary are linked (see ci.yml for why: MSVC LTCG per link)
       - working-directory: packages/reader-helper
-        run: cargo test --release --locked
+        run: cargo test --release --locked --lib --bin fast-reader-helper
       - working-directory: packages/reader-helper
-        run: cargo build --release --locked
+        run: cargo build --release --locked --bin fast-reader-helper
       - uses: actions/upload-artifact@v4
         with:
           name: helper-${{ matrix.bin_dir }}

@@ -53,12 +53,21 @@ jobs:
           workspaces: packages/reader-helper
       - name: Test fixtures
         run: python3 scripts/gen_fixtures.py
+      # Every executable Cargo links statically pulls in all of MuPDF. On Windows MuPDF's MSBuild projects
+      # compile with /GL (whole-program optimization), so each link re-runs LTCG over the whole library: with
+      # the dependencies cached, the crate itself took ~9 min under a bare `cargo test` (7 links: lib, two bin
+      # harnesses, the real bins, 2 examples) and ~5.5 min for `cargo build` (2 links). Link only what ships or
+      # carries tests: the lib and main test harnesses (that is all 92 tests; the benchmark bin has none) and
+      # the real helper. The benchmark bin and the examples are still type-checked, which does not link.
       - name: cargo test
         working-directory: packages/reader-helper
-        run: cargo test --release --locked
+        run: cargo test --release --locked --lib --bin fast-reader-helper
       - name: cargo build
         working-directory: packages/reader-helper
-        run: cargo build --release --locked
+        run: cargo build --release --locked --bin fast-reader-helper
+      - name: Benchmark binary and examples still compile
+        working-directory: packages/reader-helper
+        run: cargo check --release --locked --bins --examples
       - name: Serve-mode smoke test and memory benchmark
         # Skipped on Windows: the script measures memory with `ps`/`footprint`.
         if: runner.os != 'Windows'
