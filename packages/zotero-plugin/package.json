@@ -1,6 +1,6 @@
 {
   "name": "zotero-fast-reader-plugin",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Zotero 10 plugin: adds \"Open in Fast Reader\" and launches the fast-reader-helper native process. See ../../docs/adr/001-reader-helper-stack.md.",
   "type": "module",
