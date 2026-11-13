@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Zotero Glide",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Open PDF attachments in a lightweight, process-isolated MuPDF reader alongside Zotero's built-in reader.",
   "author": "Zotero Glide contributors",
   "icons": {
