@@ -243,9 +243,16 @@ const CSS = `
 @media (prefers-color-scheme:dark){.fr-root{--fr-stage:#2b2b2e}}
 .fr-bar{display:flex;align-items:center;gap:2px;padding:3px 8px;flex:none;border-bottom:1px solid var(--fr-border);min-height:34px}
 .fr-grp{display:flex;align-items:center;gap:2px}
-/* narrow readers (a split pane): trade the less important controls for room */
-@container (max-width:900px){.fr-brand{display:none}.fr-find input{width:7em}}
-@container (max-width:640px){.fr-bar{flex-wrap:wrap;row-gap:2px}.fr-bar .fr-grow{display:none}.fr-find input{width:6em}.fr-page-input{width:2.6em}}
+/* adaptive toolbar: .fr-compact controls exist only in a narrow reader (a split pane), where .fr-full ones fold away */
+.fr-compact{display:none}
+.fr-root[data-compact=true] .fr-compact{display:inline-flex}
+.fr-root[data-compact=true] .fr-full,.fr-root[data-compact=true] .fr-brand{display:none}
+.fr-zoom-compact{gap:2px;font-size:12px}
+.fr-root[data-compact=true] .fr-bar{gap:1px;padding:3px 4px}
+.fr-root[data-compact=true] .fr-find{display:none;position:absolute;z-index:20;right:6px;top:36px;height:30px;padding:0 4px 0 8px;background:var(--fr-popup);box-shadow:0 4px 16px rgba(0,0,0,.28);border-radius:8px}
+.fr-root[data-compact=true][data-findopen=true] .fr-find{display:flex}
+.fr-root[data-compact=true] .fr-find input{width:10em}
+@container (max-width:900px){.fr-brand{display:none}}
 .fr-bar .fr-grow{flex:1}
 .fr-btn{display:inline-flex;align-items:center;justify-content:center;min-width:28px;height:26px;padding:0 5px;border:none;border-radius:5px;background:none;color:inherit;font:inherit;cursor:default}
 .fr-btn:hover{background:var(--fr-hover)}
@@ -352,7 +359,7 @@ li[data-open=true]>.fr-ol-row .fr-twisty svg{transform:rotate(90deg)}
 .fr-cite:hover{background:var(--fr-hover)}
 .fr-cite-n{flex:none;min-width:1.6em;max-width:9em;font-weight:600;opacity:.65;text-align:end}
 .fr-ann img{display:block;max-width:100%;margin:4px 0;border-radius:3px}
-.fr-chip{display:inline-flex;align-items:center;gap:5px;max-width:34%;min-width:0;height:24px;padding:0 6px;border:1px solid var(--fr-border);border-radius:6px;font-size:12px;font-weight:600;cursor:default}
+.fr-chip{display:inline-flex;align-items:center;gap:5px;max-width:40%;flex:0 1 auto;min-width:78px;min-width:0;height:24px;padding:0 6px;border:1px solid var(--fr-border);border-radius:6px;font-size:12px;font-weight:600;cursor:default}
 .fr-chip:hover{background:var(--fr-hover)}
 .fr-chip-title{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .fr-btn[hidden]{display:none}
@@ -446,6 +453,9 @@ export class ReaderView {
   private readonly searchInput: HTMLInputElement;
   private readonly searchCount: HTMLElement;
   private readonly colorDot: HTMLElement;
+  private zoomCompact!: HTMLElement;
+  private annotCompact!: HTMLElement;
+  private toolNow: Tool = null;
   private cropButton!: HTMLButtonElement;
   private readonly toolButtons = new Map<string, HTMLButtonElement>();
   private readonly sideBody: HTMLElement;
@@ -472,6 +482,7 @@ export class ReaderView {
   private thumbEls: HTMLElement[] = [];
   private thumbCanvases: HTMLCanvasElement[] = [];
   private resizeObserver: ResizeObserver | null = null;
+  private barObserver: ResizeObserver | null = null;
   private resizeTimer: number | null = null;
   private lastSent = { w: 0, h: 0, dpr: 0 };
   private dpr = 1;
@@ -532,17 +543,41 @@ export class ReaderView {
     });
     this.pageTotal = el("span", "fr-label", "/ –", left);
     btn("chevron-right", "Next page", () => ev.nextPage(), left);
-    el("span", "fr-sep", undefined, left);
-    btn("minus", "Zoom out", () => ev.zoomBy(1 / 1.15), left);
-    this.zoomLabel = el("span", "fr-label", "", left);
-    btn("plus", "Zoom in", () => ev.zoomBy(1.15), left);
-    btn("move-horizontal", "Fit width", () => ev.fit("width"), left);
-    btn("maximize", "Fit page", () => ev.fit("page"), left);
-    this.cropButton = btn("crop", "Crop white margins", () => ev.toggleCrop(), left);
+    el("span", "fr-sep fr-full", undefined, left);
+    const zoomGrp = el("div", "fr-grp fr-full", undefined, left);
+    btn("minus", "Zoom out", () => ev.zoomBy(1 / 1.15), zoomGrp);
+    this.zoomLabel = el("span", "fr-label", "", zoomGrp);
+    btn("plus", "Zoom in", () => ev.zoomBy(1.15), zoomGrp);
+    btn("move-horizontal", "Fit width", () => ev.fit("width"), zoomGrp);
+    btn("maximize", "Fit page", () => ev.fit("page"), zoomGrp);
+    this.cropButton = btn("crop", "Crop white margins", () => ev.toggleCrop(), zoomGrp);
+    // compact bar: one button with the zoom level opens everything above
+    const zoomMenu = el("button", "fr-btn fr-compact fr-zoom-compact", undefined, left);
+    zoomMenu.title = "Zoom, fit and crop";
+    this.zoomCompact = el("span", undefined, "", zoomMenu);
+    zoomMenu.append(createIcon(doc, "chevron-down", 12));
+    zoomMenu.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this.showMenu(zoomMenu, [
+        { label: "Zoom in", icon: "plus", run: () => ev.zoomBy(1.15) },
+        { label: "Zoom out", icon: "minus", run: () => ev.zoomBy(1 / 1.15) },
+        { label: "Fit width", icon: "move-horizontal", run: () => ev.fit("width") },
+        { label: "Fit page", icon: "maximize", run: () => ev.fit("page") },
+        { label: "Crop white margins", icon: "crop", checked: this.cropButton.getAttribute("aria-pressed") === "true", run: () => ev.toggleCrop() },
+      ]);
+    });
     this.cropButton.setAttribute("aria-pressed", "false");
 
     el("span", "fr-grow", undefined, bar);
-    const mid = el("div", "fr-grp", undefined, bar);
+    const annot = el("button", "fr-btn fr-compact", undefined, bar);
+    annot.title = "Annotation tools";
+    annot.append(createIcon(doc, "highlighter", 16));
+    this.annotCompact = annot;
+    annot.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this.showToolsPopup(annot);
+    });
+    const mid = el("div", "fr-grp fr-full", undefined, bar);
     const tool = (id: "highlight" | "underline" | "note" | "image", icon: IconName, title: string) => {
       const b = btn(icon, title, () => ev.setTool(b.getAttribute("aria-pressed") === "true" ? null : id), mid);
       b.setAttribute("aria-pressed", "false");
@@ -562,6 +597,12 @@ export class ReaderView {
     el("span", "fr-grow", undefined, bar);
 
     const right = el("div", "fr-grp", undefined, bar);
+    const findBtn = btn("search", "Find in document", () => {
+      const open = this.root.dataset.findopen !== "true";
+      this.root.dataset.findopen = String(open);
+      if (open) this.searchInput.focus();
+    }, right);
+    findBtn.classList.add("fr-compact");
     const find = el("div", "fr-find", undefined, right);
     find.append(createIcon(doc, "search", 14));
     this.searchInput = el("input", undefined, undefined, find);
@@ -573,6 +614,7 @@ export class ReaderView {
         if (this.searchInput.value.trim()) ev.search(this.searchInput.value, e.shiftKey);
       } else if (e.key === "Escape") {
         this.searchInput.value = "";
+        this.root.dataset.findopen = "false";
         this.searchCount.textContent = "";
         ev.searchCleared();
         this.focus();
@@ -699,6 +741,13 @@ export class ReaderView {
     const RO = (this.win as unknown as { ResizeObserver: typeof ResizeObserver }).ResizeObserver;
     this.resizeObserver = new RO(() => this.scheduleViewport());
     this.resizeObserver.observe(this.scroller);
+    // an adaptive toolbar: below these widths groups of controls fold into one button each (a split pane is narrow)
+    this.barObserver = new RO(() => {
+      const w = this.root.getBoundingClientRect().width;
+      this.root.dataset.compact = w < 820 ? "true" : "false";
+      if (w >= 820) this.root.dataset.findopen = "false";
+    });
+    this.barObserver.observe(this.root);
 
     container.append(this.root);
     this.setColor(ANNOTATION_COLORS[0]!.hex);
@@ -804,11 +853,14 @@ export class ReaderView {
   }
   setZoomLabel(pct: number): void {
     this.zoomLabel.textContent = `${Math.round(pct)}%`;
+    this.zoomCompact.textContent = `${Math.round(pct)}%`;
   }
   setCropped(on: boolean): void {
     this.cropButton.setAttribute("aria-pressed", String(on));
   }
   setTool(tool: Tool): void {
+    this.toolNow = tool;
+    this.annotCompact?.setAttribute("aria-pressed", String(tool !== null));
     for (const [id, b] of this.toolButtons) b.setAttribute("aria-pressed", String(id === tool));
     this.setCursor(tool === "note" || tool === "image" ? "crosshair" : "");
   }
@@ -1267,6 +1319,33 @@ export class ReaderView {
   showColorPopup(anchor: HTMLElement): void {
     this.hidePopups();
     this.popup.append(this.colorRow(this.colorDot.style.background ? rgbToHex(this.colorDot.style.background) : "", (hex) => {
+      this.ev.setColor(hex);
+      this.hidePopups();
+    }));
+    const r = anchor.getBoundingClientRect();
+    this.placePopup(r.left, r.bottom);
+  }
+
+  /** Compact toolbar: the annotation tools and the color, in one popup. */
+  showToolsPopup(anchor: HTMLElement): void {
+    this.hidePopups();
+    const row = this.doc.createElementNS(XHTML, "div") as HTMLElement;
+    row.className = "fr-popup-row";
+    const tools: Array<[Exclude<Tool, null>, IconName, string]> = [
+      ["highlight", "highlighter", "Highlight text"],
+      ["underline", "underline", "Underline text"],
+      ["note", "sticky-note", "Add note"],
+      ["image", "box-select", "Select area"],
+    ];
+    for (const [id, icon, title] of tools) {
+      const b = this.iconButton(icon, title, () => {
+        this.ev.setTool(this.toolNow === id ? null : id);
+        this.hidePopups();
+      });
+      b.setAttribute("aria-pressed", String(this.toolNow === id));
+      row.append(b);
+    }
+    this.popup.append(row, this.colorRow(this.colorDot.style.background ? rgbToHex(this.colorDot.style.background) : "", (hex) => {
       this.ev.setColor(hex);
       this.hidePopups();
     }));
@@ -1879,6 +1958,7 @@ export class ReaderView {
   dispose(): void {
     this.themeMql?.removeEventListener("change", this.onSchemeChange);
     this.resizeObserver?.disconnect();
+    this.barObserver?.disconnect();
     if (this.resizeTimer !== null) this.win.clearTimeout(this.resizeTimer);
     this.clearAllPages();
     this.clearThumbs();
