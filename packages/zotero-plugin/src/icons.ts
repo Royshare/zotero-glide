@@ -14,6 +14,8 @@ export const ICONS = {
   "chevron-left": [["path", { d: "m15 18-6-6 6-6" }]],
   "chevron-right": [["path", { d: "m9 18 6-6-6-6" }]],
   "chevron-up": [["path", { d: "m18 15-6-6-6 6" }]],
+  "chevrons-down-up": [["path", { d: "m7 20 5-5 5 5" }], ["path", { d: "m7 4 5 5 5-5" }]],
+  "chevrons-up-down": [["path", { d: "m7 15 5 5 5-5" }], ["path", { d: "m7 9 5-5 5 5" }]],
   "chevron-down": [["path", { d: "m6 9 6 6 6-6" }]],
   plus: [["path", { d: "M5 12h14" }], ["path", { d: "M12 5v14" }]],
   minus: [["path", { d: "M5 12h14" }]],

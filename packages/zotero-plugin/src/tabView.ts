@@ -200,6 +200,7 @@ const CSS = `
 .fr-outline>ul{padding-inline-start:6px}
 .fr-outline li>div{display:flex;align-items:center;gap:2px;padding:2px 4px;border-radius:4px;cursor:default}
 .fr-outline li>div:hover{background:var(--fr-hover)}
+.fr-outline-bar{display:flex;justify-content:center;gap:2px;padding:2px 4px;border-bottom:1px solid var(--fr-border)}
 .fr-twisty{width:14px;opacity:.7;text-align:center;flex:none}
 .fr-scroller{position:relative;flex:1;min-width:0;overflow:auto;background:var(--fr-stage);scrollbar-gutter:stable}
 .fr-pages{position:relative;min-width:100%;cursor:text}
@@ -1189,6 +1190,7 @@ export class ReaderView {
       this.sideBody.append(e);
       return;
     }
+    const setters: Array<(open: boolean) => void> = [];
     const build = (nodes: OutlineNode[], depth: number): HTMLElement => {
       const ul = this.doc.createElementNS(XHTML, "ul") as HTMLElement;
       for (const n of nodes) {
@@ -1204,10 +1206,15 @@ export class ReaderView {
           const open = depth < 1;
           kids.style.display = open ? "" : "none";
           tw.textContent = open ? "▾" : "▸";
+          const k = kids;
+          setters.push((o) => {
+            k.style.display = o ? "" : "none";
+            tw.textContent = o ? "▾" : "▸";
+          });
           tw.addEventListener("click", (e) => {
             e.stopPropagation();
-            const hidden = kids!.style.display === "none";
-            kids!.style.display = hidden ? "" : "none";
+            const hidden = k.style.display === "none";
+            k.style.display = hidden ? "" : "none";
             tw.textContent = hidden ? "▾" : "▸";
           });
           li.append(kids);
@@ -1219,7 +1226,20 @@ export class ReaderView {
     };
     const wrap = this.doc.createElementNS(XHTML, "div") as HTMLElement;
     wrap.className = "fr-outline";
-    wrap.append(build(items, 0));
+    const bar = this.doc.createElementNS(XHTML, "div") as HTMLElement;
+    bar.className = "fr-outline-bar";
+    const mk = (icon: IconName, title: string, open: boolean) => {
+      const b = this.doc.createElementNS(XHTML, "button") as HTMLButtonElement;
+      b.className = "fr-btn";
+      b.title = title;
+      b.setAttribute("aria-label", title);
+      b.append(createIcon(this.doc, icon, 16));
+      b.addEventListener("click", () => setters.forEach((f) => f(open)));
+      bar.append(b);
+    };
+    mk("chevrons-up-down", "Expand all", true);
+    mk("chevrons-down-up", "Collapse all", false);
+    wrap.append(bar, build(items, 0));
     this.sideBody.append(wrap);
   }
 
