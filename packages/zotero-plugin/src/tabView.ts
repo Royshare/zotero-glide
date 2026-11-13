@@ -413,7 +413,7 @@ li[data-open=true]>.fr-ol-row .fr-twisty svg{transform:rotate(90deg)}
 .fr-switch[aria-checked=true]::after{transform:translateX(16px)}
 .fr-themes{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
 .fr-theme{position:relative;display:flex;align-items:center;justify-content:center;height:38px;border:1px solid var(--fr-border);border-radius:8px;font:inherit;font-size:12.5px;cursor:default;padding:0 4px;overflow:hidden;white-space:nowrap}
-.fr-theme[title=Auto]{text-shadow:0 0 3px #fff,0 0 3px #000}
+.fr-theme-pill{padding:2px 9px;border-radius:10px;background:Canvas;box-shadow:0 0 0 1px var(--fr-border)}
 .fr-theme:hover{border-color:color-mix(in srgb,CanvasText 45%,transparent)}
 .fr-theme[aria-pressed=true]{outline:2px solid AccentColor;outline-offset:1px}
 .fr-theme-add{background:none;color:inherit;opacity:.8}
@@ -1449,7 +1449,11 @@ export class ReaderView {
         const b = mk("button", "fr-theme", grid);
         b.style.background = bg;
         b.style.color = fg;
-        b.textContent = name;
+        if (id === "auto") {
+          // the label sits on a split background: give it a pill of its own so it stays readable
+          const pill = mk("span", "fr-theme-pill", b, name);
+          pill.style.color = "CanvasText";
+        } else b.textContent = name;
         b.title = name;
         b.setAttribute("aria-pressed", String(st.theme === id));
         b.addEventListener("click", (e) => {
