@@ -9,7 +9,8 @@
 # NOT YET DONE (documented in docs/cross-platform.md): macOS notarization and Windows signing.
 # Unsigned binaries trigger Gatekeeper / SmartScreen warnings on first run.
 #
-# Like ci.yml, this has not been run on GitHub; the individual scripts it calls were run locally.
+# Like ci.yml, this had not been run on GitHub before the first public release; the individual
+# scripts it calls were run locally. Check the first run's logs before announcing it.
 name: Release
 
 on:
@@ -68,6 +69,8 @@ jobs:
         run: |
           v="$(node -p "require('./packages/zotero-plugin/package.json').version")"
           [ "refs/tags/v$v" = "$GITHUB_REF" ] || { echo "tag $GITHUB_REF != v$v"; exit 1; }
+          m="$(node -p "require('./packages/zotero-plugin/addon/manifest.json').version")"
+          [ "$m" = "$v" ] || { echo "addon/manifest.json version $m != $v"; exit 1; }
           echo "VERSION=$v" >> "$GITHUB_ENV"
       - name: License material is current
         run: |
@@ -98,6 +101,20 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           cp packages/zotero-plugin/.scaffold/build/zotero-fast-reader.xpi "zotero-fast-reader-$VERSION.xpi"
+          XPI="zotero-fast-reader-$VERSION.xpi"
+          # Zotero's update manifest (manifest.json's update_url points at the latest release's copy)
+          node -e '
+            const fs = require("fs");
+            const m = JSON.parse(fs.readFileSync("packages/zotero-plugin/addon/manifest.json", "utf8"));
+            const z = m.applications.zotero, v = process.env.VERSION, f = process.argv[1];
+            const hash = require("crypto").createHash("sha256").update(fs.readFileSync(f)).digest("hex");
+            fs.writeFileSync("update.json", JSON.stringify({ addons: { [z.id]: { updates: [{
+              version: v,
+              update_link: `${process.env.FAST_READER_SOURCE_URL}/releases/download/v${v}/${f}`,
+              update_hash: `sha256:${hash}`,
+              applications: { zotero: { strict_min_version: z.strict_min_version } },
+            }] } } }, null, 2) + "\n");
+          ' "$XPI"
           sha256sum "zotero-fast-reader-$VERSION.xpi" "zotero-fast-reader-$VERSION-source.tar.gz" > SHA256SUMS
           gh release create "v$VERSION" --generate-notes --title "Zotero Fast Reader $VERSION" \
-            "zotero-fast-reader-$VERSION.xpi" "zotero-fast-reader-$VERSION-source.tar.gz" SHA256SUMS
+            "zotero-fast-reader-$VERSION.xpi" "zotero-fast-reader-$VERSION-source.tar.gz" SHA256SUMS update.json

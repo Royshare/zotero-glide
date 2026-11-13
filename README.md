@@ -1,46 +1,67 @@
-# Zotero Fast Reader (v0.1)
+# Zotero Fast Reader
 
 <img src="packages/zotero-plugin/addon/content/icons/zotero-glide.svg" alt="Zotero Glide icon: an open book with a red-tinted right page" width="96" height="96">
 
-A lightweight MuPDF-based reading companion for Zotero.
+A lightweight, MuPDF-based PDF reader that opens as a tab inside Zotero.
 
-## What this is
+> **Status: early (v0.1), experimental.** Developed and tested mostly on macOS (Apple Silicon).
+> Windows and Linux builds are produced by CI but have had little hands-on testing inside Zotero.
+> Expect rough edges, and please [report them](https://github.com/Royshare/zotero-glide/issues/new/choose).
 
-An experimental Zotero plugin that adds **"Open in Fast Reader"** to a
-PDF attachment's context menu. Choosing it opens the PDF as a **tab in
-Zotero's own tab bar**, rendered by a separate, native, MuPDF-based helper
-process (one per tab) -- a second, minimal reading path alongside Zotero's
-own built-in Gecko/PDF.js reader, not a replacement for it. A second menu
-entry, **"Open in Fast Reader (separate window)"**, opens the same helper in
-its own OS window instead.
+## What it does
 
-See [`docs/adr/002-in-tab-reader.md`](docs/adr/002-in-tab-reader.md) for
-how the tab works and the alternatives that were ruled out.
+Adds **Open in Fast Reader** to a PDF attachment's context menu. The PDF opens as a tab in Zotero's
+own tab bar, rendered by a separate native MuPDF process (one per tab). It sits alongside Zotero's
+built-in PDF.js reader and does not replace or modify it. **Open in Fast Reader (separate window)**
+opens the same renderer in its own OS window.
 
-The hypothesis being tested: a PDF reader that is fully process-isolated
-from Zotero's Gecko-based reader has substantially lower lifecycle
-coupling to it -- opening/closing it doesn't touch Zotero's own reader
-tabs or memory, and closing it lets the OS reclaim its resources
-independently of whether Zotero itself is still running. See
-`docs/benchmark-methodology.md` for what's actually been measured toward
-that hypothesis so far, and what hasn't.
+- Continuous scrolling, zoom, fit width / fit page, rotate, crop margins, light / dark / sepia themes
+- Text selection and copy, find with highlights, clickable links, outline and thumbnails
+- Highlight, underline and note annotations, stored in **Zotero** (they sync and show up in Zotero's
+  own reader; the PDF file is never modified)
+- A notes pane that edits the item's child notes with Zotero's own note editor
+- Copy citation, export a PDF copy with annotations embedded, reading mode with reflowed text
+- Remembers your place in each PDF; background tabs free their memory
 
-## What this is not
+## Install
 
-- Not a replacement for Zotero's built-in PDF.js reader.
-- Not a separate annotation system: highlights, underlines and notes you make
-  here are stored in **Zotero** (the same way Zotero's own reader stores them), so
-  they sync and appear in both readers. The PDF file itself is never modified.
-- Not a general-purpose PDF application. No PDF editing, no cloud sync, no
-  AI features, no note format of its own (notes are ordinary Zotero child notes,
-  edited with Zotero's own note editor in a side pane -- see
-  [`docs/adr/004-notes-pane.md`](docs/adr/004-notes-pane.md)).
-- Not a fork or monkey-patch of Zotero's reader internals -- the plugin
-  never touches Zotero's existing reader code, and never touches
-  `zotero.sqlite` directly.
+1. Download `zotero-fast-reader-<version>.xpi` from the
+   [latest release](https://github.com/Royshare/zotero-glide/releases/latest). Right-click the link and save it; don't open it in a browser.
+2. In Zotero: **Tools → Plugins** → gear icon → **Install Plugin From File...** → pick the `.xpi`.
+3. Right-click a PDF attachment → **Open in Fast Reader**.
 
-See §2 of the original project brief (or `docs/adr/001-*.md`'s framing)
-for the full non-goals list this was built against.
+Requires Zotero 7 or newer. The `.xpi` bundles the helper for macOS (Apple Silicon and Intel),
+Windows x64 and Linux x64.
+
+**Unsigned binaries.** The helper is not yet code-signed or notarized. macOS Gatekeeper or Windows
+SmartScreen may warn the first time it runs. Verify the download against `SHA256SUMS` on the release
+page. Signing is tracked in [`docs/cross-platform.md`](docs/cross-platform.md).
+
+Settings are under **Zotero ▸ Settings ▸ Fast Reader**: open PDFs here by default, and how long a
+background tab waits before freeing its memory.
+
+## Keyboard (tab)
+
+`←`/`→` previous/next page; arrows, `Space`, `PageUp/Down` scroll; `Home`/`End` first/last page;
+`+`/`-`, pinch or `Ctrl/Cmd`+wheel zoom; `1` fit width, `2` fit page; `Ctrl/Cmd+F` find (`Enter` next,
+`Shift+Enter` previous); `Ctrl/Cmd+G` go to page; `Ctrl/Cmd+C` copy selection; `Ctrl/Cmd+A` select all
+text; `Esc` clears the selection / tool / reading mode.
+
+## What it is not
+
+- Not a replacement for Zotero's built-in reader, and not a fork or monkey-patch of it. The plugin never
+  touches `zotero.sqlite` directly.
+- Not a general PDF application: no PDF editing, no cloud sync, no AI features, no annotation or note
+  format of its own.
+- Not accessible to screen readers yet (see [ADR 001](docs/adr/001-reader-helper-stack.md)).
+
+## Why process isolation
+
+Zotero's reader runs inside its Gecko UI process. Fast Reader tests the other end of the tradeoff: a
+single-purpose native process whose memory and CPU are entirely its own and are reclaimed by the OS
+when the tab closes. **This is a hypothesis, not a settled claim**: MuPDF is not always lighter than
+PDF.js. Measured numbers, including a case where MuPDF's own cache uses more memory, are in
+[`docs/benchmark-methodology.md`](docs/benchmark-methodology.md).
 
 ## Architecture
 
@@ -99,166 +120,65 @@ real, documented case -- image-heavy PDFs -- where MuPDF's own internal
 resource cache adds meaningfully more memory than this project's own
 render cache does) rather than an assumed conclusion.
 
-## Build
+## Building from source
 
-Requires: Rust (stable, 2024 edition support), a C compiler + `make`
-(for MuPDF's vendored build), Node.js (for the plugin's test suite and
-fixture generation), and Python 3 with Pillow (for fixture generation --
-`pip install pillow` if you don't already have it; text-only fixtures work
-without it).
+Requires Rust (stable), a C compiler + `make` (MuPDF is built from vendored source), Node.js 24+, and
+Python 3 (with Pillow for the image fixtures: `pip install pillow`). On Windows see
+[`docs/cross-platform.md`](docs/cross-platform.md).
 
 ```bash
-scripts/setup.sh
+scripts/setup.sh                      # fixtures, build helper, run both test suites
 ```
 
-This generates PDF fixtures, builds `reader-helper` in release mode, runs
-its test suite, copies the built binary into
-`packages/zotero-plugin/addon/bin/<platform>/`, and runs the plugin's test
-suite. See individual scripts under `scripts/` to run any one step alone
-(`build-helper.sh`, `benchmark-reader.sh`).
+Build an installable `.xpi` for your own OS/architecture:
 
-## Run
+```bash
+cd packages/zotero-plugin
+npm ci
+npm run build                         # -> .scaffold/build/zotero-fast-reader.xpi
+```
 
-Standalone (no Zotero involved -- this is how `reader-helper` was
-developed and tested):
+`npm run build` rebuilds the native helper first, then bundles the plugin and type-checks. A local
+build contains only your host's helper binary; release builds contain all platforms.
+
+Develop against a live, isolated Zotero profile (hot reload on save):
+
+```bash
+cd packages/zotero-plugin
+cp .env.example .env                  # set the Zotero binary and an isolated profile / data dir
+npm start
+```
+
+Never point the dev profile at your real Zotero data.
+
+Run the helper standalone, without Zotero:
 
 ```bash
 FAST_READER_DEBUG=1 ./packages/reader-helper/target/release/fast-reader-helper path/to/some.pdf
 ```
 
-Keyboard (standalone window): `PageDown`/`Right`/`Space` next page,
-`PageUp`/`Left` previous, `+`/`-` zoom, `1` fit width, `2` fit page,
-`Ctrl/Cmd+F` search (`Enter` next hit, `Shift+Enter` previous),
-`Ctrl/Cmd+G` go to page, `Esc` close search/goto or quit.
-
-Keyboard (tab): `←`/`→` previous/next page; arrows, `Space`, `PageUp/Down` scroll;
-`Home`/`End` first/last page; `+`/`-` or pinch / `Ctrl/Cmd`+wheel zoom; `1` fit
-width, `2` fit page; `Ctrl/Cmd+F` find (`Enter` next, `Shift+Enter` previous);
-`Ctrl/Cmd+G` go to page; `Ctrl/Cmd+C` copy the selection; `Ctrl/Cmd+A` select all
-text; `Esc` clears the selection / tool / reading mode.
-
-The tab, in short: continuous scrolling; select text (drag, double-click a word,
-triple-click a line) and copy it; highlight, underline and note annotations with
-Zotero's eight colors; an annotation list, thumbnails and the document outline in
-a sidebar; clickable links; find with highlights; page themes (light / dark / sepia);
-rotate; crop white margins; a reading mode with reflowed text; your place in each PDF
-is remembered. The ⋯ menu also has: copy citation, create a Zotero note from the
-annotations, export a PDF with the annotations embedded (a copy), open in the system
-viewer (to print), and open in Zotero's own reader at the current page.
-Settings (Zotero ▸ Settings ▸ Fast Reader): open PDFs here by default (double-click,
-`zotero://open-pdf` links, note citations), and how long a background tab waits before
-freeing its memory.
-
-Headless (what the tab drives -- JSON lines on stdin, frames written to
-files; protocol in `packages/reader-helper/src/serve.rs`):
-
-```bash
-fast-reader-helper --serve --frame-dir /tmp/frames --file some.pdf
-```
-
-Inside Zotero -- confirmed working via `zotero-plugin-scaffold`, which
-installs the plugin as a temporary add-on over the Firefox Remote
-Debugging Protocol and hot-reloads on save (see STATUS.md's "Zotero dev
-loading" section for how this was verified and why it replaced an earlier
-proxy-file attempt that didn't work in this environment):
-
-```bash
-cd packages/zotero-plugin
-npm install
-cp .env.example .env   # set ZOTERO_PLUGIN_ZOTERO_BIN_PATH and an
-                        # isolated ZOTERO_PLUGIN_PROFILE_PATH/DATA_DIR
-npm start
-```
-
-### Installing a built `.xpi` directly
-
-For trying the plugin in your own Zotero install (rather than the
-scaffold-managed dev instance above), build an installable `.xpi`:
-
-```bash
-cd packages/zotero-plugin
-npm install
-npm run build                    # -> .scaffold/build/zotero-fast-reader.xpi
-```
-
-`npm run build` rebuilds the native helper itself first (a `prebuild`
-script runs `scripts/build-helper.sh` automatically -- no separate manual
-step, and no risk of packaging a stale helper binary from an earlier
-build; see STATUS.md for a real bug that came from exactly that before
-this was wired up). `npm start` does the same via `prestart`.
-
-Then in Zotero: **Tools → Plugins** (or **Extensions**, depending on
-version) → gear icon → **Install Plugin From File...** → select the
-`.xpi`. The built `.xpi` only bundles the helper binary for the host you
-built it on (`scripts/build-helper.sh` populates only the current host's
-platform under `addon/bin/` -- see `docs/cross-platform.md`), so build it
-on the same OS/architecture you intend to install it on until
-cross-platform binaries are produced.
-
 | npm command | what it does |
 |---|---|
-| `npm start` | `zotero-plugin serve` -- launch Zotero with the plugin loaded live, hot-reload on save (see above) |
-| `npm run build` | rebuilds the native helper (`prebuild`), then `zotero-plugin build && tsc --noEmit` -- bundles `src/` into `.scaffold/build/zotero-fast-reader.xpi` and type-checks |
-| `npm run typecheck` | `tsc --noEmit` alone |
-| `npm test` | run the 118 pure-logic unit tests -- Node's built-in test runner, running the `.ts` sources directly (Node v26's native type-stripping, no ts-node/jest/babel) |
-| `npm run release` | `zotero-plugin release` -- publish a GitHub release with the built xpi; needs a real git remote + `GITHUB_TOKEN`, not configured for this repo yet |
+| `npm start` | launch Zotero with the plugin loaded, hot-reload on save |
+| `npm run build` | build helper, bundle plugin into the `.xpi`, type-check |
+| `npm run typecheck` | `tsc --noEmit` |
+| `npm test` | plugin unit tests (Node's built-in runner) |
 
-The plugin's source (`packages/zotero-plugin/src/*.ts`) is real
-TypeScript, bundled into one file by esbuild; `addon/` holds only static
-files (`manifest.json`, `bootstrap.js`, `bin/`). See STATUS.md's "v0.2"
-section for why bundling replaced the earlier multi-file
-`loadSubScript` chain.
+Tests: `(cd packages/reader-helper && cargo test)` and `(cd packages/zotero-plugin && npm test)`.
+Benchmarks: see [`docs/benchmark-methodology.md`](docs/benchmark-methodology.md).
 
-## Tests executed
+## Releasing
 
-```bash
-(cd packages/reader-helper && cargo test)   # 86 tests: engine, cache, blit pixel math,
-                                             #   session navigation/zoom/search, argv parsing,
-                                             #   serve-mode protocol + frames
-(cd packages/zotero-plugin && node --test)  # 118 tests: PDF detection, platform
-                                             #   resolution, argv construction, wire protocol,
-                                             #   keymap, helper connection (spawn/read/close),
-                                             #   missing-executable/spawn-failure handling
-```
+Maintainers: from `packages/zotero-plugin`, on an up-to-date `main`, run `npm run release`. It prompts for the
+version, bumps `package.json` and `addon/manifest.json`, commits, tags `vX.Y.Z` and pushes. The pushed tag triggers the
+[release workflow](.github/workflows/release.yml), which builds the helper on four platforms, assembles one
+`.xpi`, and publishes it with the AGPL corresponding-source archive, `SHA256SUMS` and `update.json`
+(Zotero's auto-update manifest).
 
-Both currently pass in full; see STATUS.md for exactly what is and isn't
-additionally verified by hand (e.g., real MuPDF rendering was visually
-confirmed by inspecting a rendered PNG, not just asserted by a test; the
-same is true of the docked-window positioning -- confirmed via real argv
-inspection, not by looking at the window).
+## Contributing
 
-## Benchmarks
-
-```bash
-bash scripts/benchmark-reader.sh release     # standalone window
-python3 scripts/benchmark-serve.py           # in-tab (--serve) mode: footprint + page-turn latency
-scripts/test-linux-docker.sh                 # helper tests + that benchmark on real Linux, in a container
-# scripts/pdfjs-compare/: head-to-head memory vs Zotero's PDF.js reader (needs an isolated Zotero profile; see its compare.py)
-```
-
-Full methodology, the actual numbers observed, and an honest account of
-two measurement compromises (this sandbox can't inject synthetic
-keystrokes into the live GUI; macOS `ps` RSS overstates memory vs.
-`footprint`'s `phys_footprint`) are in
-[`docs/benchmark-methodology.md`](docs/benchmark-methodology.md). Headline
-result: this project's own render/display-list caches provably plateau
-under navigation (bounded at 3 entries, confirmed both by a unit test
-walking a simulated 200-page read and by a real headless benchmark run);
-MuPDF's own separate internal resource store does not plateau as tightly
-for image-heavy documents, and that's documented rather than hidden.
-
-## What is still open
-
-- A person actually using the tab (real keys, trackpad pinch, tab switching): STATUS.md lists
-  what was verified mechanically and what wasn't.
-- Image / ink / free-text annotation creation, annotation editing by dragging, OCR (ADR 003).
-- Windows Zotero UI testing and x86_64 Linux (not run); Windows x64 now builds and
-  passes the native tests and headless PDF smoke test. The CI workflows have not
-  run on GitHub (`docs/cross-platform.md`).
-- Code signing / notarization (`docs/cross-platform.md`).
-- Before a public release: make the repository public (or ship the source archive with every
-  binary), since the AGPL source offer must be obtainable by recipients --
-  [`docs/licensing.md`](docs/licensing.md).
+See [`CONTRIBUTING.md`](CONTRIBUTING.md). Security issues: [`SECURITY.md`](SECURITY.md).
+Project history and verification notes: [`STATUS.md`](STATUS.md).
 
 ## License
 
@@ -267,18 +187,14 @@ AGPL-3.0-or-later, so the whole project is too. Third-party components:
 `THIRD_PARTY_NOTICES.md`. Where the source for a distributed build is, and how
 the obligations are met: [`docs/licensing.md`](docs/licensing.md). The `.xpi`
 carries `legal/LICENSE`, `legal/THIRD_PARTY_NOTICES.md` and `legal/SOURCE.md`;
-`fast-reader-helper --license` prints the notice from the binary.
+`fast-reader-helper --license` prints the notice from the binary. Every release also publishes a
+complete-corresponding-source archive.
 
 This software is based in part on the work of the Independent JPEG Group (libjpeg, inside MuPDF).
 
-## Known platform limitations
+## Known limitations
 
-- Developed on macOS (Apple Silicon). Windows x64 has also been built and
-  tested with 86 native tests, 120 plugin tests, and a headless PDF smoke test
-  of the helper extracted from the XPI. Manual use inside Zotero on Windows
-  and Linux builds remain unverified -- see `docs/cross-platform.md` for
-  Windows build instructions and the intended build matrix.
-- Accessibility (screen readers) is not supported in v0.1's raw
-  `winit`-based UI -- documented as an accepted trade-off in
-  `docs/adr/001-*.md`, with `AccessKit` identified as the path if this
-  becomes a requirement later.
+- Windows and Linux have not had full manual testing inside Zotero; CI builds and tests the helper on
+  both. macOS is the primary platform.
+- Not yet: image / ink / free-text annotations, editing annotations by dragging, OCR.
+- No code signing or notarization yet.

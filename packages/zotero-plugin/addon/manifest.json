@@ -11,7 +11,7 @@
   "applications": {
     "zotero": {
       "id": "fast-reader@zotero-glide.local",
-      "update_url": "https://github.com/Royshare/zotero-glide/releases/download/release/update.json",
+      "update_url": "https://github.com/Royshare/zotero-glide/releases/latest/download/update.json",
       "strict_min_version": "7.0",
       "strict_max_version": "10.*"
     }

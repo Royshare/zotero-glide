@@ -1,0 +1,52 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Zotero Fast Reader contributors
+name: Bug report
+description: Something doesn't work as expected
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Fast Reader version
+      placeholder: "0.1.0"
+    validations: {required: true}
+  - type: input
+    id: zotero
+    attributes:
+      label: Zotero version
+      placeholder: "7.0.x / 8.x"
+    validations: {required: true}
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options: [macOS (Apple Silicon), macOS (Intel), Windows x64, Linux x64, Other]
+    validations: {required: true}
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Where it happened
+      options: [In a Zotero tab, Separate window, Standalone helper]
+    validations: {required: true}
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations: {required: true}
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: "1. Right-click a PDF attachment\n2. ..."
+    validations: {required: true}
+  - type: textarea
+    id: pdf
+    attributes:
+      label: The PDF
+      description: If it's specific to one file, say what's unusual about it (size, scanned, encrypted, ...) and attach it if you can share it.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: "Run the helper with `FAST_READER_DEBUG=1`, or paste Zotero's Help → Debug Output Logging. Remove anything private."
+      render: text
