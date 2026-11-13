@@ -308,6 +308,7 @@ export class ReaderTab {
         search: (q, back) => this.doSearch(q, back),
         searchCleared: () => this.clearSearch(),
         openMenu: (anchor) => this.openMenu(anchor),
+        toggleCrop: () => this.toggleCrop(),
         sidebarTab: (t) => this.setSidebarTab(t),
         sidebarResized: (width) => this.d.settings.set({ sidebarWidth: width }),
         sidebarScrolled: () => this.onSidebarScrolled(),
@@ -495,6 +496,7 @@ export class ReaderTab {
 
   /** Recomputes scale and layout, keeping the part of the document under the viewport centre in place. */
   private relayout(): void {
+    this.view.setCropped(!!this.settings.insets);
     if (!this.pages.length) return;
     const vh = this.view.viewport.height;
     const anchor: ScrollAnchor | null = this.layout.tops.length ? captureAnchor(this.layout, this.view.scroller.scrollTop, vh / 2) : null;
@@ -1876,7 +1878,7 @@ export class ReaderTab {
       { separator: true, label: "" },
       { label: "Export PDF with annotations…", icon: "download", run: () => void this.exportAnnotated() },
       { label: "Open in system viewer", icon: "external-link", run: () => this.d.host.openExternally() },
-      { label: "Open in Zotero’s own reader at this page", icon: "book-open", run: () => this.d.host.openInZoteroReader(this.pageNow) },
+      { label: "Open in Zotero’s own reader", icon: "book-open", run: () => this.d.host.openInZoteroReader(this.pageNow) },
     ];
     this.view.showMenu(anchor, items);
   }

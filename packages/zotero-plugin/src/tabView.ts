@@ -91,6 +91,7 @@ export interface ViewEvents {
   search(query: string, backwards: boolean): void;
   searchCleared(): void;
   openMenu(anchor: HTMLElement): void;
+  toggleCrop(): void;
   sidebarTab(tab: SidebarTab): void;
   sidebarResized(width: number): void;
   sidebarScrolled(): void;
@@ -286,6 +287,7 @@ export class ReaderView {
   private readonly searchInput: HTMLInputElement;
   private readonly searchCount: HTMLElement;
   private readonly colorDot: HTMLElement;
+  private cropButton!: HTMLButtonElement;
   private readonly toolButtons = new Map<string, HTMLButtonElement>();
   private readonly sideBody: HTMLElement;
   private readonly sideTabs = new Map<SidebarTab, HTMLButtonElement>();
@@ -365,6 +367,8 @@ export class ReaderView {
     btn("plus", "Zoom in", () => ev.zoomBy(1.15), left);
     btn("move-horizontal", "Fit width", () => ev.fit("width"), left);
     btn("maximize", "Fit page", () => ev.fit("page"), left);
+    this.cropButton = btn("crop", "Crop white margins", () => ev.toggleCrop(), left);
+    this.cropButton.setAttribute("aria-pressed", "false");
 
     el("span", "fr-grow", undefined, bar);
     const mid = el("div", "fr-grp", undefined, bar);
@@ -376,7 +380,7 @@ export class ReaderView {
     tool("highlight", "highlighter", "Highlight text");
     tool("underline", "underline", "Underline text");
     tool("note", "sticky-note", "Add note");
-    tool("image", "image", "Select area");
+    tool("image", "box-select", "Select area");
     const colorBtn = el("button", "fr-btn", undefined, mid);
     colorBtn.title = "Annotation color";
     this.colorDot = el("span", "fr-color-dot", undefined, colorBtn);
@@ -531,6 +535,9 @@ export class ReaderView {
   }
   setZoomLabel(pct: number): void {
     this.zoomLabel.textContent = `${Math.round(pct)}%`;
+  }
+  setCropped(on: boolean): void {
+    this.cropButton.setAttribute("aria-pressed", String(on));
   }
   setTool(tool: Tool): void {
     for (const [id, b] of this.toolButtons) b.setAttribute("aria-pressed", String(id === tool));
