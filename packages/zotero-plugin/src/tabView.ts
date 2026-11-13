@@ -12,15 +12,23 @@
 
 import { ANNOTATION_COLORS } from "./annotations.ts";
 import { createGlideMark, createIcon, type IconName } from "./icons.ts";
-import type { Layout } from "./layout.ts";
+import type { Layout, ScrollMode, SpreadMode } from "./layout.ts";
 import { relativeDate, type NoteSummary } from "./notes.ts";
 import type { OutlineNode, Rect } from "./protocol.ts";
 
 const XHTML = "http://www.w3.org/1999/xhtml";
 
 export type Tool = "highlight" | "underline" | "note" | "image" | null;
-/** "auto" follows Zotero's light/dark appearance. */
-export type PageTheme = "auto" | "light" | "dark" | "black" | "sepia";
+/** "auto" follows Zotero's light/dark appearance; `custom:<id>` is one of the user's own themes. */
+export type PageTheme = "auto" | "light" | "snow" | "dark" | "black" | "sepia" | `custom:${string}`;
+/** A user-made theme: the page paper and ink colors (the bitmap is recolored between them). */
+export interface CustomTheme {
+  id: string;
+  name: string;
+  bg: string;
+  fg: string;
+}
+export type SplitMode = "none" | "columns" | "rows";
 export type SidebarTab = "thumbnails" | "annotations" | "outline" | "images";
 
 export interface OverlayItem {
@@ -62,6 +70,27 @@ export interface MenuItem {
 }
 
 /** What the notes pane's list shows. */
+export interface ViewPanelState {
+  reading: boolean;
+  scroll: ScrollMode;
+  spread: SpreadMode;
+  split: SplitMode;
+  /** false in the second pane of a split: only the main pane can split */
+  splitAvailable: boolean;
+  theme: PageTheme;
+  customThemes: CustomTheme[];
+}
+export interface ViewPanelHandlers {
+  state(): ViewPanelState;
+  setReading(on: boolean): void;
+  setScroll(m: ScrollMode): void;
+  setSpread(m: SpreadMode): void;
+  setSplit(m: SplitMode): void;
+  setTheme(t: PageTheme): void;
+  addTheme(bg: string, fg: string): void;
+  deleteTheme(id: string): void;
+}
+
 export interface NotesListState {
   /** false for a PDF without a parent item: notes can't be created */
   available: boolean;
@@ -100,6 +129,11 @@ export interface ViewEvents {
   search(query: string, backwards: boolean): void;
   searchCleared(): void;
   openMenu(anchor: HTMLElement): void;
+  /** The toolbar's view-options button (reading mode, scrolling, spreads, split view, themes). */
+  openViewPanel(anchor: HTMLElement): void;
+  /** Second pane of a split: the paper chip's menu, and its close button. */
+  paneMenu(anchor: HTMLElement): void;
+  paneClose(): void;
   toggleCrop(): void;
   sidebarTab(tab: SidebarTab): void;
   sidebarResized(width: number): void;
@@ -128,18 +162,44 @@ export interface ViewEvents {
   annotationDragData(key: string): string | null;
 }
 
-const DARK_BG = [0x2f, 0x33, 0x3d] as const;
-const DARK_FG = [0xdc, 0xe0, 0xe8] as const;
-/** per channel: luminance 0..255 -> slate..off-white (white paper -> slate, black text -> off-white) */
-const DARK_MAP = [0, 1, 2].map((c) => Uint8Array.from({ length: 256 }, (_, l) => Math.round(DARK_BG[c]! + ((255 - l) / 255) * (DARK_FG[c]! - DARK_BG[c]!))));
+export interface Palette {
+  bg: string;
+  fg: string;
+}
+export const DARK_PALETTE: Palette = { bg: "#2f333d", fg: "#dce0e8" };
+export const SNOW_PALETTE: Palette = { bg: "#eceef2", fg: "#1b1e24" };
 const DIM = Uint8Array.from({ length: 256 }, (_, v) => Math.round(v * 0.88));
+
+function hexRgb(hex: string): [number, number, number] {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+  const n = m ? parseInt(m[1]!, 16) : 0;
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+/** WCAG-ish relative brightness 0..1, to decide whether a palette is a light or a dark page. */
+export function paletteIsDark(bg: string): boolean {
+  const [r, g, b] = hexRgb(bg);
+  return (r * 299 + g * 587 + b * 114) / 255000 < 0.5;
+}
+const mapCache = new Map<string, Uint8Array[]>();
+/** per channel: luminance 0..255 -> ink..paper (white paper -> bg, black text -> fg) */
+function paletteMap(p: Palette): Uint8Array[] {
+  const key = `${p.bg}/${p.fg}`;
+  let m = mapCache.get(key);
+  if (!m) {
+    const bg = hexRgb(p.bg), fg = hexRgb(p.fg);
+    m = [0, 1, 2].map((c) => Uint8Array.from({ length: 256 }, (_, l) => Math.round(bg[c]! + ((255 - l) / 255) * (fg[c]! - bg[c]!))));
+    if (mapCache.size > 16) mapCache.clear();
+    mapCache.set(key, m);
+  }
+  return m;
+}
 
 /**
  * Zotero-style dark recoloring, on a copy of the bitmap: gray paper and text go white..black -> slate..off-white,
  * colored pixels are dimmed, and the page's raster images (`images`, bitmap pixels, from the renderer) are left
  * exactly as they are, white background included. One cheap pass with lookup tables.
  */
-export function darken(src: Uint8ClampedArray<ArrayBuffer>, width: number, height: number, images: Rect[] = []): Uint8ClampedArray<ArrayBuffer> {
+export function darken(src: Uint8ClampedArray<ArrayBuffer>, width: number, height: number, images: Rect[] = [], palette: Palette = DARK_PALETTE): Uint8ClampedArray<ArrayBuffer> {
   const out = src; // in place: a frame is a private copy, and a second 11 MB buffer per page is memory the default reader does not use
   let mask: Uint8Array | null = null;
   if (images.length) {
@@ -149,7 +209,7 @@ export function darken(src: Uint8ClampedArray<ArrayBuffer>, width: number, heigh
       for (let y = Math.max(0, Math.floor(ry)), y1 = Math.min(height, Math.ceil(ry + rh)); y < y1; y++) mask.fill(1, y * width + x0, y * width + x1);
     }
   }
-  const [mr, mg, mb] = DARK_MAP as [Uint8Array, Uint8Array, Uint8Array];
+  const [mr, mg, mb] = paletteMap(palette) as [Uint8Array, Uint8Array, Uint8Array];
   for (let p = 0, i = 0, n = width * height; p < n; p++, i += 4) {
     const r = src[i]!, g = src[i + 1]!, b = src[i + 2]!;
     if (mask && mask[p]) continue;
@@ -179,10 +239,13 @@ const CSS = `
   /* The root must never size itself from its content: Zotero's tab-content element grows with it, which
      made the viewport grow with the page width, which grew the fit-width scale -- a runaway to 800% on a
      document whose pages are wider than the window. Containment pins it to the deck's size. */
-  contain:size;overflow:hidden}
+  contain:size;overflow:hidden;container-type:inline-size}
 @media (prefers-color-scheme:dark){.fr-root{--fr-stage:#2b2b2e}}
 .fr-bar{display:flex;align-items:center;gap:2px;padding:3px 8px;flex:none;border-bottom:1px solid var(--fr-border);min-height:34px}
 .fr-grp{display:flex;align-items:center;gap:2px}
+/* narrow readers (a split pane): trade the less important controls for room */
+@container (max-width:900px){.fr-brand{display:none}.fr-find input{width:7em}}
+@container (max-width:640px){.fr-bar{flex-wrap:wrap;row-gap:2px}.fr-bar .fr-grow{display:none}.fr-find input{width:6em}.fr-page-input{width:2.6em}}
 .fr-bar .fr-grow{flex:1}
 .fr-btn{display:inline-flex;align-items:center;justify-content:center;min-width:28px;height:26px;padding:0 5px;border:none;border-radius:5px;background:none;color:inherit;font:inherit;cursor:default}
 .fr-btn:hover{background:var(--fr-hover)}
@@ -216,7 +279,8 @@ const CSS = `
 .fr-notes-msg{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:16px;text-align:center;background:var(--fr-bg)}
 .fr-notes .fr-cta{border:1px solid var(--fr-border);border-radius:5px;background:none;color:inherit;font:inherit;padding:3px 12px;height:26px}
 .fr-notes .fr-cta:hover{background:var(--fr-hover)}
-.fr-ann .fr-ann-act{display:inline-flex;vertical-align:middle;min-width:20px;height:18px;padding:0 2px;opacity:.7}
+.fr-ann .fr-ann-act{display:inline-flex;vertical-align:middle;min-width:20px;height:18px;padding:0 2px;opacity:0;pointer-events:none}
+.fr-ann:hover .fr-ann-act,.fr-ann .fr-ann-act:focus-visible{opacity:.75;pointer-events:auto}
 .fr-ann .fr-ann-act:hover{opacity:1}
 .fr-side-resize{position:absolute;z-index:2;inset-block:0;inset-inline-end:-4px;width:8px;cursor:ew-resize;touch-action:none}
 .fr-side-tabs{display:flex;gap:2px;padding:4px;border-bottom:1px solid var(--fr-border)}
@@ -239,12 +303,22 @@ const CSS = `
 .fr-ann .fr-ann-add{margin-top:4px;color:AccentColor;opacity:.9}
 .fr-swatch{width:14px;height:14px;border-radius:50%;flex:none;margin:0 1px}
 .fr-empty{padding:16px;opacity:.6;text-align:center}
-.fr-outline ul{list-style:none;margin:0;padding-inline-start:14px}
-.fr-outline>ul{padding-inline-start:6px}
-.fr-outline li>div{display:flex;align-items:center;gap:2px;padding:2px 4px;border-radius:4px;cursor:default}
-.fr-outline li>div:hover{background:var(--fr-hover)}
-.fr-outline-bar{display:flex;justify-content:center;gap:2px;padding:2px 4px;border-bottom:1px solid var(--fr-border)}
-.fr-twisty{width:14px;opacity:.7;text-align:center;flex:none}
+.fr-outline{padding:6px 4px 12px}
+.fr-outline ul{list-style:none;margin:0;padding:0}
+.fr-outline ul ul{margin-inline-start:15px;padding-inline-start:4px;border-inline-start:1px solid var(--fr-border)}
+.fr-outline>ul>li+li{margin-top:2px}
+.fr-ol-row{display:flex;align-items:flex-start;gap:2px;min-height:28px;padding:3px 6px 3px 2px;border-radius:6px;cursor:default;line-height:1.35}
+.fr-ol-row:hover{background:var(--fr-hover)}
+.fr-ol-row[data-depth="0"]{font-weight:600}
+.fr-ol-row[data-depth="2"],.fr-ol-row[data-depth="3"]{font-size:12px;opacity:.85}
+.fr-ol-label{flex:1;min-width:0;padding-top:2px;overflow-wrap:anywhere}
+.fr-twisty{flex:none;display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;padding:0;border:none;border-radius:5px;background:none;color:inherit;opacity:.75;cursor:default}
+.fr-twisty:hover:not(:disabled){background:var(--fr-hover);opacity:1}
+.fr-twisty:disabled{visibility:hidden}
+.fr-twisty svg{transition:transform .12s}
+li[data-open=true]>.fr-ol-row .fr-twisty svg{transform:rotate(90deg)}
+.fr-outline-bar{display:none;justify-content:center;gap:4px;padding:3px 4px;border-bottom:1px solid var(--fr-border);flex:none}
+.fr-root[data-sidetab=outline] .fr-outline-bar:not(:empty){display:flex}
 .fr-scroller{position:relative;flex:1;min-width:0;overflow:auto;background:var(--fr-stage);scrollbar-gutter:stable}
 .fr-pages{position:relative;min-width:100%;cursor:text}
 .fr-page{position:absolute;background:#fff;box-shadow:0 1px 5px rgba(0,0,0,.4);user-select:none;-moz-user-select:none;cursor:inherit}
@@ -278,16 +352,22 @@ const CSS = `
 .fr-cite:hover{background:var(--fr-hover)}
 .fr-cite-n{flex:none;min-width:1.6em;max-width:9em;font-weight:600;opacity:.65;text-align:end}
 .fr-ann img{display:block;max-width:100%;margin:4px 0;border-radius:3px}
+.fr-chip{display:inline-flex;align-items:center;gap:5px;max-width:34%;min-width:0;height:24px;padding:0 6px;border:1px solid var(--fr-border);border-radius:6px;font-size:12px;font-weight:600;cursor:default}
+.fr-chip:hover{background:var(--fr-hover)}
+.fr-chip-title{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fr-btn[hidden]{display:none}
 .fr-brand{display:inline-flex;align-items:center;gap:5px;padding:0 6px 0 2px;opacity:.85;font-weight:600;font-size:12px;cursor:default}
 .fr-ov .fr-o-note{border-radius:3px 3px 3px 0;box-shadow:0 1px 3px rgba(0,0,0,.4);opacity:.95;border:1px solid rgba(0,0,0,.35)}
-.fr-root[data-theme=dark] .fr-ov .fr-o-highlight{mix-blend-mode:screen;opacity:.55}
+.fr-root[data-tone=dark] .fr-ov .fr-o-highlight{mix-blend-mode:screen;opacity:.55}
 .fr-root[data-theme=dark]{--fr-stage:#262932}
+.fr-root[data-theme=snow]{--fr-stage:#d3d6dc}
+.fr-root[data-theme=snow] .fr-page{background:#eceef2}
+.fr-root[data-theme=custom]{--fr-stage:var(--fr-stage-custom)}
+.fr-root[data-theme=custom] .fr-page{background:var(--fr-page-bg)}
 /* Zotero's "dark": slate pages; the bitmap is recolored per pixel (see darken()), so photos keep their colors. */
 .fr-root[data-theme=dark] .fr-page{background:#2f333d}
-.fr-root[data-theme=dark] .fr-ov .fr-o-highlight{mix-blend-mode:screen;opacity:.5}
 /* Zotero's "black": the whole page inverted, which also inverts photos. */
 .fr-root[data-theme=black]{--fr-stage:#111}
-.fr-root[data-theme=black] .fr-ov .fr-o-highlight{mix-blend-mode:screen;opacity:.55}
 .fr-root[data-theme=black] .fr-page canvas{filter:invert(1) hue-rotate(180deg)}
 .fr-root[data-theme=black] .fr-page{background:#000}
 .fr-root[data-theme=sepia] .fr-page canvas{filter:sepia(.55) saturate(.9) brightness(.97)}
@@ -295,12 +375,49 @@ const CSS = `
 .fr-msg{position:absolute;inset:34px 0 0;display:flex;align-items:center;justify-content:center;text-align:center;padding:2em;white-space:pre-wrap;pointer-events:none;opacity:.8}
 .fr-popup{position:absolute;z-index:20;background:var(--fr-popup);color:var(--fr-fg);border:1px solid var(--fr-border);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.28);padding:5px;display:none}
 .fr-popup[data-open=true]{display:block}
-.fr-colors{display:flex;gap:5px;padding:3px}
-.fr-colors button{width:18px;height:18px;border-radius:50%;border:2px solid transparent;padding:0;cursor:default}
-.fr-colors button[aria-pressed=true]{border-color:CanvasText}
+.fr-color-list[hidden],.fr-outline ul[hidden]{display:none}
+.fr-colors{display:flex;align-items:center;gap:6px;padding:4px 3px 3px}
+.fr-popup-row+.fr-colors-wrap{border-top:1px solid var(--fr-border);margin-top:3px}
+.fr-colors-more{display:inline-flex;align-items:center;justify-content:center;width:22px;height:18px;padding:0;border-radius:9px;border:1px solid var(--fr-border);background:var(--fr-hover);color:inherit;cursor:default}
+.fr-colors-more[aria-pressed=true]{background:var(--c);border-color:CanvasText}
+.fr-colors-more[aria-expanded=true] svg{transform:rotate(180deg)}
+.fr-color-list{display:flex;flex-direction:column;padding:2px 0 3px;border-top:1px solid var(--fr-border);margin-top:3px}
+.fr-color-list button{display:flex;align-items:center;gap:8px;border:none;background:none;color:inherit;font:inherit;padding:3px 6px;border-radius:5px;cursor:default;text-align:start}
+.fr-color-list button:hover{background:var(--fr-hover)}
+.fr-color-list button[aria-pressed=true]{background:var(--fr-active)}
+.fr-colors>button:not(.fr-colors-more){width:18px;height:18px;border-radius:50%;border:2px solid transparent;padding:0;cursor:default}
+.fr-colors>button:not(.fr-colors-more)[aria-pressed=true]{border-color:CanvasText}
 .fr-popup-row{display:flex;align-items:center;gap:2px}
 .fr-popup textarea{display:block;width:240px;height:70px;margin:4px 2px 2px;resize:vertical;font:inherit;border:1px solid var(--fr-border);border-radius:5px;background:var(--fr-bg);color:inherit;padding:4px}
 .fr-popup .fr-quote{max-width:260px;max-height:4.2em;overflow:hidden;opacity:.75;padding:2px 4px;font-size:12px}
+.fr-popup-wide{padding:0}
+.fr-viewpanel{width:292px;padding:10px 12px 12px;box-sizing:border-box}
+.fr-vp-row{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:34px}
+.fr-vp-label{font-size:14px}
+.fr-vp-head{margin:6px 0 8px}
+.fr-vp-hr{border:none;border-top:1px solid var(--fr-border);margin:6px -12px}
+.fr-seg{display:flex;gap:1px;padding:2px;border-radius:8px;background:var(--fr-hover)}
+.fr-seg-btn{display:inline-flex;align-items:center;justify-content:center;width:44px;height:28px;border:none;border-radius:6px;background:none;color:inherit;opacity:.8;cursor:default}
+.fr-seg-btn:hover{opacity:1}
+.fr-seg-btn[aria-pressed=true]{background:var(--fr-bg);opacity:1;box-shadow:0 1px 3px rgba(0,0,0,.25)}
+.fr-switch{position:relative;width:38px;height:22px;border:none;border-radius:11px;background:color-mix(in srgb,CanvasText 22%,transparent);padding:0;cursor:default;transition:background .12s}
+.fr-switch::after{content:"";position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.4);transition:transform .12s}
+.fr-switch[aria-checked=true]{background:AccentColor}
+.fr-switch[aria-checked=true]::after{transform:translateX(16px)}
+.fr-themes{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.fr-theme{position:relative;display:flex;align-items:center;justify-content:center;height:38px;border:1px solid var(--fr-border);border-radius:8px;font:inherit;font-size:12.5px;cursor:default;padding:0 4px;overflow:hidden;white-space:nowrap}
+.fr-theme[title=Auto]{text-shadow:0 0 3px #fff,0 0 3px #000}
+.fr-theme:hover{border-color:color-mix(in srgb,CanvasText 45%,transparent)}
+.fr-theme[aria-pressed=true]{outline:2px solid AccentColor;outline-offset:1px}
+.fr-theme-add{background:none;color:inherit;opacity:.8}
+.fr-theme-x{position:absolute;top:1px;right:1px;display:none;width:15px;height:15px;align-items:center;justify-content:center;border-radius:50%;background:rgba(0,0,0,.55);color:#fff}
+.fr-theme:hover .fr-theme-x{display:inline-flex}
+.fr-theme-editor{margin-top:10px;padding-top:8px;border-top:1px solid var(--fr-border);display:flex;flex-direction:column;gap:6px}
+.fr-theme-field{display:flex;align-items:center;justify-content:space-between}
+.fr-theme-field input{width:56px;height:24px;padding:0;border:1px solid var(--fr-border);border-radius:5px;background:none}
+.fr-theme-preview{padding:8px 10px;border-radius:6px;border:1px solid var(--fr-border);font-family:Georgia,serif}
+.fr-popup .fr-cta{border:1px solid var(--fr-border);border-radius:5px;background:none;color:inherit;font:inherit;padding:3px 12px;height:26px}
+.fr-popup .fr-cta:hover{background:var(--fr-hover)}
 .fr-menu{min-width:230px;padding:4px 0}
 .fr-menu button{display:flex;align-items:center;gap:8px;width:100%;text-align:start;border:none;background:none;color:inherit;font:inherit;padding:5px 12px;cursor:default}
 .fr-menu button:hover:not(:disabled){background:var(--fr-hover)}
@@ -332,6 +449,11 @@ export class ReaderView {
   private cropButton!: HTMLButtonElement;
   private readonly toolButtons = new Map<string, HTMLButtonElement>();
   private readonly sideBody: HTMLElement;
+  /** Expand/collapse-all row of the Outline tab: outside the scrolling body so it never scrolls away. */
+  private readonly sideBar: HTMLElement;
+  private brandEl!: HTMLElement;
+  private barEl!: HTMLElement;
+  private outlineSetters: Array<(open: boolean) => void> = [];
   private readonly sideTabs = new Map<SidebarTab, HTMLButtonElement>();
   private readonly notesPane: HTMLElement;
   private readonly notesTitle: HTMLElement;
@@ -389,6 +511,8 @@ export class ReaderView {
     const brand = el("span", "fr-brand", undefined, bar);
     brand.title = "Zotero Glide: a fast PDF reader plugin for Zotero";
     brand.append(createGlideMark(doc, 16), doc.createTextNode("Glide"));
+    this.brandEl = brand;
+    this.barEl = bar;
     const left = el("div", "fr-grp", undefined, bar);
     btn("panel-left", "Toggle sidebar", () => ev.toggleSidebar(), left);
     el("span", "fr-sep", undefined, left);
@@ -459,7 +583,8 @@ export class ReaderView {
     btn("chevron-down", "Next match", () => this.searchInput.value.trim() && ev.search(this.searchInput.value, false), find);
     this.notesButton = btn("notebook-pen", "Notes (N)", () => ev.toggleNotes(), right);
     this.notesButton.setAttribute("aria-pressed", "false");
-    const more = btn("more", "View and more", () => ev.openMenu(more), right);
+    const viewBtn = btn("view-options", "View options: reading mode, scrolling, spreads, split view, themes", () => ev.openViewPanel(viewBtn), right);
+    const more = btn("more", "More", () => ev.openMenu(more), right);
 
     // ---- sidebar + pages
     const main = el("div", "fr-main", undefined, this.root);
@@ -473,6 +598,7 @@ export class ReaderView {
     sideTab("annotations", "message-square", "Annotations");
     sideTab("outline", "list", "Outline");
     sideTab("images", "image", "Images");
+    this.sideBar = el("div", "fr-outline-bar", undefined, side);
     this.sideBody = el("div", "fr-side-body", undefined, side);
     this.sideBody.addEventListener("scroll", () => ev.sidebarScrolled());
     const resize = el("div", "fr-side-resize", undefined, side);
@@ -578,6 +704,38 @@ export class ReaderView {
     this.setColor(ANNOTATION_COLORS[0]!.hex);
   }
 
+  // -------------------------------------------------------------- second pane of a split
+  /**
+   * Turns this view into the second pane of a split: the brand becomes a chip naming the paper (its menu picks
+   * another paper, swaps the panes or closes the split) and there is a close button; the notes pane button goes.
+   */
+  setSecondary(title: string): void {
+    this.root.dataset.pane = "secondary";
+    this.brandEl.replaceChildren();
+    this.brandEl.className = "fr-chip";
+    this.brandEl.title = "Choose which paper this pane shows";
+    this.brandEl.append(createIcon(this.doc, "split-columns", 15));
+    const t = this.doc.createElementNS(XHTML, "span") as HTMLElement;
+    t.className = "fr-chip-title";
+    t.textContent = title;
+    this.brandEl.append(t, createIcon(this.doc, "chevron-down", 13));
+    this.brandEl.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this.ev.paneMenu(this.brandEl);
+    });
+    this.notesButton.hidden = true;
+    const x = this.doc.createElementNS(XHTML, "button") as HTMLButtonElement;
+    x.className = "fr-btn";
+    x.title = "Close this pane";
+    x.setAttribute("aria-label", "Close this pane");
+    x.append(createIcon(this.doc, "x", 16));
+    x.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this.ev.paneClose();
+    });
+    this.barEl.append(x);
+  }
+
   // -------------------------------------------------------------- basics
   focus(): void {
     this.root.focus();
@@ -595,10 +753,14 @@ export class ReaderView {
     this.message.style.display = text ? "flex" : "none";
   }
   private themeSetting: PageTheme = "light";
+  private customThemes: CustomTheme[] = [];
+  /** the pixel recoloring in force (dark, snow, custom), or null for the original bitmap */
+  private palette: Palette | null = null;
   private themeMql: MediaQueryList | null = null;
   private readonly onSchemeChange = (): void => this.applyTheme();
-  setTheme(theme: PageTheme): void {
+  setTheme(theme: PageTheme, custom: CustomTheme[] = this.customThemes): void {
     this.themeSetting = theme;
+    this.customThemes = custom;
     if (!this.themeMql) {
       this.themeMql = this.win.matchMedia?.("(prefers-color-scheme: dark)") ?? null;
       this.themeMql?.addEventListener("change", this.onSchemeChange);
@@ -606,16 +768,35 @@ export class ReaderView {
     this.applyTheme();
   }
   private applyTheme(): void {
-    const before = this.root.dataset.theme;
-    const now = this.themeSetting === "auto" ? (this.themeMql?.matches ? "dark" : "light") : this.themeSetting;
+    const before = this.palette ? `${this.palette.bg}/${this.palette.fg}` : "";
+    let now: string = this.themeSetting === "auto" ? (this.themeMql?.matches ? "dark" : "light") : this.themeSetting;
+    let palette: Palette | null = now === "dark" ? DARK_PALETTE : now === "snow" ? SNOW_PALETTE : null;
+    if (now.startsWith("custom:")) {
+      const c = this.customThemes.find((t) => t.id === now.slice(7));
+      if (c) {
+        palette = { bg: c.bg, fg: c.fg };
+        now = "custom";
+      } else now = "light"; // its custom theme was deleted
+    }
+    this.palette = palette;
     this.root.dataset.theme = now;
-    if (before !== undefined && (before === "dark") !== (now === "dark")) this.ev.themeChanged();
+    this.root.dataset.tone = palette ? (paletteIsDark(palette.bg) ? "dark" : "light") : now === "black" ? "dark" : "light";
+    if (palette) {
+      this.root.style.setProperty("--fr-page-bg", palette.bg);
+      this.root.style.setProperty("--fr-stage-custom", `color-mix(in srgb,${palette.bg} 80%,${paletteIsDark(palette.bg) ? "#000" : "#808080"})`);
+    }
+    const after = palette ? `${palette.bg}/${palette.fg}` : "";
+    if (before !== after && this.root.isConnected) this.ev.themeChanged();
   }
   get themeNow(): string | undefined {
     return this.root.dataset.theme;
   }
-  private get pixelDark(): boolean {
-    return this.root.dataset.theme === "dark";
+  /** Whether page bitmaps are recolored pixel by pixel (so the renderer's image rectangles matter). */
+  get recolors(): boolean {
+    return this.palette !== null;
+  }
+  private get pixelPalette(): Palette | null {
+    return this.palette;
   }
   setPageInfo(page: number, total: number): void {
     if (this.doc.activeElement !== this.pageInput) this.pageInput.value = String(page);
@@ -827,7 +1008,7 @@ export class ReaderView {
     if (!ctx) return;
     const ImageDataCtor = (this.win as unknown as { ImageData: typeof ImageData }).ImageData;
     const px = new Uint8ClampedArray(rgba.buffer as ArrayBuffer, rgba.byteOffset, width * height * 4);
-    ctx.putImageData(new ImageDataCtor(this.pixelDark ? darken(px, width, height, images) : px, width, height), 0, 0);
+    ctx.putImageData(new ImageDataCtor(this.pixelPalette ? darken(px, width, height, images, this.pixelPalette) : px, width, height), 0, 0);
   }
 
   /** Frees a page's bitmap (it scrolled far away). The box and its overlays stay. */
@@ -1001,7 +1182,7 @@ export class ReaderView {
     this.popupOver = false;
     this.popup.dataset.open = "false";
     this.popup.replaceChildren();
-    this.popup.classList.remove("fr-menu");
+    this.popup.classList.remove("fr-menu", "fr-popup-wide");
     this.hideOverlayMenu();
   }
 
@@ -1015,21 +1196,60 @@ export class ReaderView {
     return this.popup.dataset.open === "true" || this.overlayMenuEl?.dataset.open === "true";
   }
 
+  /** Four common colors, then a fifth button that unfolds the rest as a vertical list. */
   private colorRow(active: string, onPick: (hex: string) => void): HTMLElement {
+    const wrap = this.doc.createElementNS(XHTML, "div") as HTMLElement;
+    wrap.className = "fr-colors-wrap";
     const row = this.doc.createElementNS(XHTML, "div") as HTMLElement;
     row.className = "fr-colors";
-    for (const c of ANNOTATION_COLORS) {
+    const isActive = (hex: string) => hex.toLowerCase() === active.toLowerCase();
+    const COMMON = 4;
+    ANNOTATION_COLORS.slice(0, COMMON).forEach((c) => {
       const b = this.doc.createElementNS(XHTML, "button") as HTMLButtonElement;
       b.title = c.name;
       b.style.background = c.hex;
-      b.setAttribute("aria-pressed", String(c.hex.toLowerCase() === active.toLowerCase()));
+      b.setAttribute("aria-pressed", String(isActive(c.hex)));
       b.addEventListener("click", (e) => {
         e.stopPropagation();
         onPick(c.hex);
       });
       row.append(b);
-    }
-    return row;
+    });
+    const extra = ANNOTATION_COLORS.slice(COMMON);
+    if (extra.length) {
+      const chosen = extra.find((c) => isActive(c.hex));
+      const more = this.doc.createElementNS(XHTML, "button") as HTMLButtonElement;
+      more.className = "fr-colors-more";
+      more.title = "More colors";
+      more.setAttribute("aria-expanded", "false");
+      more.setAttribute("aria-pressed", String(!!chosen));
+      if (chosen) more.style.setProperty("--c", chosen.hex);
+      more.append(createIcon(this.doc, "chevron-down", 12));
+      const list = this.doc.createElementNS(XHTML, "div") as HTMLElement;
+      list.className = "fr-color-list";
+      list.hidden = true;
+      for (const c of extra) {
+        const b = this.doc.createElementNS(XHTML, "button") as HTMLButtonElement;
+        b.setAttribute("aria-pressed", String(isActive(c.hex)));
+        const dot = this.doc.createElementNS(XHTML, "span") as HTMLElement;
+        dot.className = "fr-swatch";
+        dot.style.background = c.hex;
+        b.append(dot, this.doc.createTextNode(c.name));
+        b.addEventListener("click", (e) => {
+          e.stopPropagation();
+          onPick(c.hex);
+        });
+        list.append(b);
+      }
+      more.addEventListener("click", (e) => {
+        e.stopPropagation();
+        list.hidden = !list.hidden;
+        more.setAttribute("aria-expanded", String(!list.hidden));
+      });
+      row.append(more);
+      wrap.append(row, list);
+    } else wrap.append(row);
+    return wrap;
   }
 
   private iconButton(icon: IconName, title: string, onClick: () => void): HTMLButtonElement {
@@ -1054,10 +1274,9 @@ export class ReaderView {
     this.placePopup(r.left, r.bottom);
   }
 
-  /** The popup that follows a text selection: colors, highlight, underline, copy. */
+  /** The popup that follows a text selection: tools on the first row, colors on the second. */
   showSelectionPopup(x: number, y: number, active: string, a: { color(hex: string): void; highlight(): void; underline(): void; copy(): void; note(): void }): void {
     this.hidePopups();
-    this.popup.append(this.colorRow(active, a.color));
     const row = this.doc.createElementNS(XHTML, "div") as HTMLElement;
     row.className = "fr-popup-row";
     row.append(
@@ -1066,8 +1285,165 @@ export class ReaderView {
       this.iconButton("message-square", "Add note to selection", a.note),
       this.iconButton("copy", "Copy", a.copy)
     );
-    this.popup.append(row);
+    this.popup.append(row, this.colorRow(active, a.color));
     this.placePopup(x, y);
+  }
+
+  // -------------------------------------------------------------- view options panel
+  /**
+   * One panel for everything that changes how the document is laid out and colored: reading mode, scrolling,
+   * spreads, split view and the page theme. `h.state()` is read again after every change, so the panel
+   * stays open and shows the new selection.
+   */
+  showViewPanel(anchor: HTMLElement, h: ViewPanelHandlers): void {
+    this.hidePopups();
+    const panel = this.doc.createElementNS(XHTML, "div") as HTMLElement;
+    panel.className = "fr-viewpanel";
+    this.popup.append(panel);
+    const mk = <K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, parent: Element, text?: string) => {
+      const e = this.doc.createElementNS(XHTML, tag) as HTMLElementTagNameMap[K];
+      e.className = cls;
+      if (text !== undefined) e.textContent = text;
+      parent.append(e);
+      return e;
+    };
+    let editing = false;
+    const render = (): void => {
+      const st = h.state();
+      panel.replaceChildren();
+      const again = (fn: () => void) => () => {
+        fn();
+        render();
+      };
+
+      const reading = mk("div", "fr-vp-row", panel);
+      mk("span", "fr-vp-label", reading, "Reading Mode");
+      const sw = mk("button", "fr-switch", reading);
+      sw.setAttribute("role", "switch");
+      sw.setAttribute("aria-checked", String(st.reading));
+      sw.title = "Reflow the text of the pages, without the page layout";
+      sw.addEventListener("click", (e) => {
+        e.stopPropagation();
+        h.setReading(!st.reading);
+        this.hidePopups();
+      });
+      mk("hr", "fr-vp-hr", panel);
+
+      const seg = <T extends string>(label: string, cur: T, opts: Array<{ v: T; icon: IconName; title: string }>, set: (v: T) => void) => {
+        const row = mk("div", "fr-vp-row", panel);
+        mk("span", "fr-vp-label", row, label);
+        const g = mk("div", "fr-seg", row);
+        for (const o of opts) {
+          const b = mk("button", "fr-seg-btn", g);
+          b.title = o.title;
+          b.setAttribute("aria-label", o.title);
+          b.setAttribute("aria-pressed", String(cur === o.v));
+          b.append(createIcon(this.doc, o.icon, 18));
+          b.addEventListener("click", (e) => {
+            e.stopPropagation();
+            again(() => set(o.v))();
+          });
+        }
+      };
+      seg<ScrollMode>("Scrolling", st.scroll, [
+        { v: "vertical", icon: "scroll-vertical", title: "Vertical scrolling" },
+        { v: "wrapped", icon: "scroll-wrapped", title: "Wrapped scrolling: several pages per row" },
+      ], h.setScroll);
+      seg<SpreadMode>("Spreads", st.spread, [
+        { v: "none", icon: "spread-none", title: "No spreads: single pages" },
+        { v: "odd", icon: "spread-odd", title: "Odd spreads: 1-2, 3-4, …" },
+        { v: "even", icon: "spread-even", title: "Even spreads: 1, 2-3, 4-5, …" },
+      ], h.setSpread);
+      mk("hr", "fr-vp-hr", panel);
+      if (st.splitAvailable) {
+        seg<SplitMode>("Split View", st.split, [
+          { v: "none", icon: "split-off", title: "No split" },
+          { v: "columns", icon: "split-columns", title: "Side by side: compare two pages or two papers" },
+          { v: "rows", icon: "split-rows", title: "Top and bottom: compare two pages or two papers" },
+        ], h.setSplit);
+        mk("hr", "fr-vp-hr", panel);
+      }
+
+      mk("div", "fr-vp-label fr-vp-head", panel, "Themes");
+      const grid = mk("div", "fr-themes", panel);
+      const themeBtn = (id: PageTheme, name: string, bg: string, fg: string, deletable?: CustomTheme) => {
+        const b = mk("button", "fr-theme", grid);
+        b.style.background = bg;
+        b.style.color = fg;
+        b.textContent = name;
+        b.title = name;
+        b.setAttribute("aria-pressed", String(st.theme === id));
+        b.addEventListener("click", (e) => {
+          e.stopPropagation();
+          again(() => h.setTheme(id))();
+        });
+        if (deletable) {
+          const x = mk("span", "fr-theme-x", b);
+          x.title = "Delete this theme";
+          x.append(createIcon(this.doc, "x", 11));
+          x.addEventListener("click", (e) => {
+            e.stopPropagation();
+            again(() => h.deleteTheme(deletable.id))();
+          });
+        }
+      };
+      themeBtn("auto", "Auto", "linear-gradient(105deg,#fff 50%,#2f333d 50%)", "#888");
+      themeBtn("light", "Original", "#ffffff", "#222");
+      themeBtn("snow", "Snow", SNOW_PALETTE.bg, SNOW_PALETTE.fg);
+      themeBtn("sepia", "Sepia", "#f4ecd8", "#4b3b2a");
+      themeBtn("dark", "Dark", DARK_PALETTE.bg, DARK_PALETTE.fg);
+      themeBtn("black", "Black", "#000000", "#e8e8e8");
+      for (const c of st.customThemes) themeBtn(`custom:${c.id}`, c.name, c.bg, c.fg, c);
+      const add = mk("button", "fr-theme fr-theme-add", grid);
+      add.title = "Create a custom theme";
+      add.setAttribute("aria-label", "Create a custom theme");
+      add.append(createIcon(this.doc, "plus", 16));
+      add.addEventListener("click", (e) => {
+        e.stopPropagation();
+        editing = !editing;
+        render();
+      });
+
+      if (editing) {
+        const ed = mk("div", "fr-theme-editor", panel);
+        const field = (label: string, value: string) => {
+          const l = mk("label", "fr-theme-field", ed);
+          mk("span", "", l, label);
+          const i = mk("input", "", l);
+          i.type = "color";
+          i.value = value;
+          return i;
+        };
+        const cur = st.customThemes.length ? st.customThemes[st.customThemes.length - 1]! : { bg: "#e6efe4", fg: "#243024" };
+        const bg = field("Page", cur.bg);
+        const fg = field("Text", cur.fg);
+        const prev = mk("div", "fr-theme-preview", ed, "Aa The quick brown fox");
+        const paint = () => {
+          prev.style.background = bg.value;
+          prev.style.color = fg.value;
+        };
+        bg.addEventListener("input", paint);
+        fg.addEventListener("input", paint);
+        paint();
+        const row = mk("div", "fr-vp-row", ed);
+        const cancel = mk("button", "fr-cta", row, "Cancel");
+        const save = mk("button", "fr-cta", row, "Save theme");
+        cancel.addEventListener("click", (e) => {
+          e.stopPropagation();
+          editing = false;
+          render();
+        });
+        save.addEventListener("click", (e) => {
+          e.stopPropagation();
+          editing = false;
+          again(() => h.addTheme(bg.value, fg.value))();
+        });
+      }
+    };
+    render();
+    const r = anchor.getBoundingClientRect();
+    this.popup.classList.add("fr-popup-wide");
+    this.placePopup(r.right - panel.offsetWidth, r.bottom);
   }
 
   /** The popup for an existing annotation: quote, color, comment, delete. */
@@ -1155,6 +1531,7 @@ export class ReaderView {
   // -------------------------------------------------------------- sidebar
   setSidebarTab(tab: SidebarTab): void {
     this.sideTab = tab;
+    this.root.dataset.sidetab = tab;
     for (const [id, b] of this.sideTabs) b.setAttribute("aria-pressed", String(id === tab));
   }
   get sidebarTabNow(): SidebarTab {
@@ -1203,7 +1580,7 @@ export class ReaderView {
     c.height = height;
     const ImageDataCtor = (this.win as unknown as { ImageData: typeof ImageData }).ImageData;
     const px = new Uint8ClampedArray(rgba.buffer as ArrayBuffer, rgba.byteOffset, width * height * 4);
-    c.getContext("2d")?.putImageData(new ImageDataCtor(this.pixelDark ? darken(px, width, height) : px, width, height), 0, 0);
+    c.getContext("2d")?.putImageData(new ImageDataCtor(this.pixelPalette ? darken(px, width, height, [], this.pixelPalette) : px, width, height), 0, 0);
   }
   hasThumb(page: number): boolean {
     return (this.thumbCanvases[page]?.width ?? 0) > 0;
@@ -1386,6 +1763,8 @@ export class ReaderView {
 
   renderOutline(items: OutlineNode[]): void {
     this.sideBody.replaceChildren();
+    this.sideBar.replaceChildren();
+    this.outlineSetters = [];
     this.thumbEls = [];
     if (!items.length) {
       const e = this.doc.createElementNS(XHTML, "div") as HTMLElement;
@@ -1394,35 +1773,41 @@ export class ReaderView {
       this.sideBody.append(e);
       return;
     }
-    const setters: Array<(open: boolean) => void> = [];
+    const setters = this.outlineSetters;
     const build = (nodes: OutlineNode[], depth: number): HTMLElement => {
       const ul = this.doc.createElementNS(XHTML, "ul") as HTMLElement;
+      ul.dataset.depth = String(depth);
       for (const n of nodes) {
         const li = this.doc.createElementNS(XHTML, "li") as HTMLElement;
         const row = this.doc.createElementNS(XHTML, "div") as HTMLElement;
-        const tw = this.doc.createElementNS(XHTML, "span") as HTMLElement;
+        row.className = "fr-ol-row";
+        row.dataset.depth = String(depth);
+        row.title = n.t;
+        const tw = this.doc.createElementNS(XHTML, "button") as HTMLButtonElement;
         tw.className = "fr-twisty";
-        row.append(tw, this.doc.createTextNode(n.t || "(untitled)"));
+        tw.tabIndex = -1;
+        const label = this.doc.createElementNS(XHTML, "span") as HTMLElement;
+        label.className = "fr-ol-label";
+        label.textContent = n.t || "(untitled)";
+        row.append(tw, label);
         li.append(row);
-        let kids: HTMLElement | null = null;
         if (n.c.length) {
-          kids = build(n.c, depth + 1);
-          const open = depth < 1;
-          kids.style.display = open ? "" : "none";
-          tw.textContent = open ? "▾" : "▸";
-          const k = kids;
-          setters.push((o) => {
-            k.style.display = o ? "" : "none";
-            tw.textContent = o ? "▾" : "▸";
-          });
+          const kids = build(n.c, depth + 1);
+          const set = (o: boolean) => {
+            kids.hidden = !o;
+            li.dataset.open = String(o);
+            tw.setAttribute("aria-expanded", String(o));
+          };
+          tw.append(createIcon(this.doc, "chevron-right", 16));
+          tw.title = "Expand / collapse";
+          set(depth < 1);
+          setters.push(set);
           tw.addEventListener("click", (e) => {
             e.stopPropagation();
-            const hidden = k.style.display === "none";
-            k.style.display = hidden ? "" : "none";
-            tw.textContent = hidden ? "▾" : "▸";
+            set(!!kids.hidden);
           });
           li.append(kids);
-        }
+        } else tw.disabled = true;
         row.addEventListener("click", () => this.ev.outlineClick(n));
         ul.append(li);
       }
@@ -1430,8 +1815,8 @@ export class ReaderView {
     };
     const wrap = this.doc.createElementNS(XHTML, "div") as HTMLElement;
     wrap.className = "fr-outline";
-    const bar = this.doc.createElementNS(XHTML, "div") as HTMLElement;
-    bar.className = "fr-outline-bar";
+    wrap.append(build(items, 0));
+    this.sideBody.append(wrap);
     const mk = (icon: IconName, title: string, open: boolean) => {
       const b = this.doc.createElementNS(XHTML, "button") as HTMLButtonElement;
       b.className = "fr-btn";
@@ -1439,12 +1824,10 @@ export class ReaderView {
       b.setAttribute("aria-label", title);
       b.append(createIcon(this.doc, icon, 16));
       b.addEventListener("click", () => setters.forEach((f) => f(open)));
-      bar.append(b);
+      this.sideBar.append(b);
     };
     mk("chevrons-up-down", "Expand all", true);
     mk("chevrons-down-up", "Collapse all", false);
-    wrap.append(bar, build(items, 0));
-    this.sideBody.append(wrap);
   }
 
   // -------------------------------------------------------------- reading mode

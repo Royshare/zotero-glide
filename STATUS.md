@@ -12,6 +12,14 @@ landed so far: the plugin's TypeScript migration, and docked-window UX
 `docs/adr/001-reader-helper-stack.md` and this file's "v0.2" section
 below for what's next.
 
+## Reader UI overhaul -- branch `feat/reader-ui-overhaul`
+
+Selection popup (tools row, then colors with an expandable list), one view-options panel (reading mode,
+scrolling, spreads, split view, themes incl. Snow/custom), split view ([ADR 005](docs/adr/005-split-view.md)),
+hover-only "add to note" on annotation cards, a clearer outline and a fixed expand/collapse row. Typecheck, unit
+tests and the browser harness were exercised; **not yet run in a real Zotero** (split with a library-selected paper,
+custom theme color picker in Zotero's XUL document).
+
 ## Notes pane (v1 + v1.1) -- branch `feat/item-notes-sidebar`
 
 A right-hand pane edits the PDF parent item's child notes with Zotero's own note editor, with Add to note, drag,

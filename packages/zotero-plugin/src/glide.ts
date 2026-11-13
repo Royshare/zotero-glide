@@ -40,7 +40,7 @@ import { resolvePdfAttachment, tabTitleForItem, type PdfLikeItem } from "./pdfAt
 import { launchGlide } from "./launchGlide.ts";
 import { buildServeArgs, helperEnvironment, type DockGeometry } from "./buildArgs.ts";
 import type { HelperProcess } from "./helperConnection.ts";
-import { ReaderTab, TAB_TYPE, type HostActions, type ZoteroTabs } from "./readerTab.ts";
+import { NO_NOTES, ReaderTab, TAB_TYPE, type GlobalSettings, type HostActions, type ReaderTabDeps, type SplitHost, type ZoteroTabs } from "./readerTab.ts";
 import { PositionStore } from "./positionStore.ts";
 import { createAnnotationBackend, createNotesBackend, createSettingsStore, parseTrimDelayMs, readerLocation, type AttachmentApi } from "./zoteroAdapters.ts";
 import { withoutTabType, type SessionTab } from "./sessionState.ts";
@@ -341,64 +341,22 @@ class GlidePlugin {
         }
       }
 
-      const helperPath = await this._resolveHelper();
-      frameDir = PathUtils.join(PathUtils.tempDir, `zotero-glide-${Zotero.Utilities.randomString(10)}`);
-      try {
-        proc = await this._subprocess().call({
-          command: helperPath,
-          arguments: buildServeArgs(pdfPath, frameDir),
-          // helper's own error text (e.g. "failed to open document") arrives
-          // on stdout as non-JSON lines and is shown if the tab dies early
-          stderr: "stdout",
-          // allocator tuning that keeps an idle/backgrounded tab small -- see buildArgs.ts
-          environment: helperEnvironment(this._hostPlatform()),
-          environmentAppend: true,
-        });
-      } catch (cause) {
-        throw new SpawnError(helperPath, cause);
-      }
+      const spawned = await this._spawnServe(pdfPath);
+      proc = spawned.proc;
+      frameDir = spawned.frameDir;
 
       const tab = new ReaderTab({
-        tabs,
-        doc: win.document,
-        isMac: !!Zotero.isMac,
+        ...this._readerDeps(win, tabs, attachment as unknown as ZItem, pdfPath, spawned.proc, spawned.frameDir),
         title: tabTitleForItem(attachment, pdfPath),
-        pdfPath,
-        frameDir,
-        proc,
-        readFile: (path) => IOUtils.read(path),
-        removeFile: (path) => IOUtils.remove(path, { ignoreAbsent: true }),
-        removeDir: (path) => IOUtils.remove(path, { recursive: true, ignoreAbsent: true }),
-        setTimeout: (fn, ms) => setTimeout(fn, ms) as unknown as number,
-        clearTimeout: (id) => clearTimeout(id as never),
-        debug: (msg) => Zotero.debug(msg),
-        requestAnimationFrame: (fn) => (win as unknown as { requestAnimationFrame(f: () => void): number }).requestAnimationFrame(fn),
-        trimDelayMs: () => parseTrimDelayMs(Zotero.Prefs.get("glide.trimDelaySeconds")),
-        collectGarbage: () => {
-          try {
-            (win as unknown as { windowUtils: { garbageCollect(): void } }).windowUtils.garbageCollect();
-          } catch (e) {
-            Zotero.debug(`[glide] garbageCollect failed: ${e}`);
-          }
-        },
-        annotations: createAnnotationBackend(Zotero as never, attachment as unknown as AttachmentApi, (m) => this._notify(m)),
-        notes: createNotesBackend(Zotero as never, attachment as unknown as AttachmentApi, win.document, (m) => this._notify(m)),
-        host: this._hostActions(attachment as unknown as ZItem, pdfPath),
-        positions: new PositionStore({
-          get: () => (Zotero.Prefs.get("glide.positions") as string | undefined) || undefined,
-          set: (v) => Zotero.Prefs.set("glide.positions", v),
-        }),
-        positionKey: `${(attachment as unknown as AttachmentApi).libraryID}/${(attachment as unknown as AttachmentApi).key}`,
-        settings: createSettingsStore({
-          get: () => (Zotero.Prefs.get("glide.settings") as string | undefined) || undefined,
-          set: (v) => Zotero.Prefs.set("glide.settings", v),
-        }),
         initial: loc,
+        split: this._splitHost(win),
         onClosed: (closed) => {
           this.readerTabs.delete(closed);
+          this._papers.delete(closed);
         },
       });
       this.readerTabs.add(tab);
+      this._papers.set(tab, { attachment: attachment as unknown as ZItem, title: tabTitleForItem(attachment, pdfPath) });
     } catch (error) {
       if (proc) {
         try {
@@ -412,6 +370,146 @@ class GlidePlugin {
       }
       this._showLaunchError(error);
     }
+  }
+
+  /** Starts a per-tab headless helper for a PDF. On failure nothing is left running. */
+  private async _spawnServe(pdfPath: string): Promise<{ proc: SubprocessHandle; frameDir: string }> {
+    const helperPath = await this._resolveHelper();
+    const frameDir = PathUtils.join(PathUtils.tempDir, `zotero-glide-${Zotero.Utilities.randomString(10)}`);
+    try {
+      const proc = await this._subprocess().call({
+        command: helperPath,
+        arguments: buildServeArgs(pdfPath, frameDir),
+        // helper's own error text (e.g. "failed to open document") arrives
+        // on stdout as non-JSON lines and is shown if the tab dies early
+        stderr: "stdout",
+        // allocator tuning that keeps an idle/backgrounded tab small -- see buildArgs.ts
+        environment: helperEnvironment(this._hostPlatform()),
+        environmentAppend: true,
+      });
+      return { proc, frameDir };
+    } catch (cause) {
+      IOUtils.remove(frameDir, { recursive: true, ignoreAbsent: true }).catch(() => {});
+      throw new SpawnError(helperPath, cause);
+    }
+  }
+
+  /** Everything a ReaderTab needs for one PDF except its title, where it opens and its split/pane hooks. */
+  private _readerDeps(win: TabsWindow, tabs: ZoteroTabs, attachment: ZItem, pdfPath: string, proc: SubprocessHandle, frameDir: string): Omit<ReaderTabDeps, "title" | "onClosed"> {
+    return {
+      tabs,
+      doc: win.document,
+      isMac: !!Zotero.isMac,
+      pdfPath,
+      frameDir,
+      proc,
+      readFile: (path) => IOUtils.read(path),
+      removeFile: (path) => IOUtils.remove(path, { ignoreAbsent: true }),
+      removeDir: (path) => IOUtils.remove(path, { recursive: true, ignoreAbsent: true }),
+      setTimeout: (fn, ms) => setTimeout(fn, ms) as unknown as number,
+      clearTimeout: (id) => clearTimeout(id as never),
+      debug: (msg) => Zotero.debug(msg),
+      requestAnimationFrame: (fn) => (win as unknown as { requestAnimationFrame(f: () => void): number }).requestAnimationFrame(fn),
+      trimDelayMs: () => parseTrimDelayMs(Zotero.Prefs.get("glide.trimDelaySeconds")),
+      collectGarbage: () => {
+        try {
+          (win as unknown as { windowUtils: { garbageCollect(): void } }).windowUtils.garbageCollect();
+        } catch (e) {
+          Zotero.debug(`[glide] garbageCollect failed: ${e}`);
+        }
+      },
+      annotations: createAnnotationBackend(Zotero as never, attachment as unknown as AttachmentApi, (m) => this._notify(m)),
+      notes: createNotesBackend(Zotero as never, attachment as unknown as AttachmentApi, win.document, (m) => this._notify(m)),
+      host: this._hostActions(attachment, pdfPath),
+      positions: new PositionStore({
+        get: () => (Zotero.Prefs.get("glide.positions") as string | undefined) || undefined,
+        set: (v) => Zotero.Prefs.set("glide.positions", v),
+      }),
+      positionKey: `${(attachment as unknown as AttachmentApi).libraryID}/${(attachment as unknown as AttachmentApi).key}`,
+      settings: createSettingsStore({
+        get: () => (Zotero.Prefs.get("glide.settings") as string | undefined) || undefined,
+        set: (v) => Zotero.Prefs.set("glide.settings", v),
+      }),
+    };
+  }
+
+  /** The papers open in Glide tabs, for the split view's paper picker. */
+  private _papers = new Map<ReaderTab, { attachment: ZItem; title: string }>();
+
+  /** Opens readers inside the second pane of a split view. */
+  private _splitHost(win: TabsWindow): SplitHost {
+    return {
+      choices: (self) => {
+        const out: ReturnType<SplitHost["choices"]> = [];
+        for (const [tab, { title }] of this._papers) if (tab !== self) out.push({ label: title, target: { kind: "tab", pdfPath: tab.pdfPath }, pdfPath: tab.pdfPath });
+        return out;
+      },
+      open: async (container, target, hooks, page) => {
+        let proc: SubprocessHandle | null = null;
+        try {
+          let attachment: ZItem | null = null;
+          let pdfPath: string | null = null;
+          if (target.kind === "same") {
+            const owner = [...this.readerTabs].find((t) => t.container.contains(container));
+            attachment = owner ? (this._papers.get(owner)?.attachment ?? null) : null;
+          } else if (target.kind === "tab") {
+            const owner = [...this.readerTabs].find((t) => t.pdfPath === target.pdfPath);
+            attachment = owner ? (this._papers.get(owner)?.attachment ?? null) : null;
+          } else {
+            const pane = Zotero.getActiveZoteroPane() as unknown as { getSelectedItems(): PdfLikeItem[] } | undefined;
+            const picked = pane?.getSelectedItems()?.[0];
+            attachment = picked ? ((await resolvePdfAttachment(picked)) as unknown as ZItem | null) : null;
+            if (!attachment) {
+              this._notify("Select an item with a PDF in the Zotero library first.");
+              return null;
+            }
+          }
+          if (!attachment) return null;
+          pdfPath = (await (attachment as unknown as { getFilePathAsync(): Promise<string | false> }).getFilePathAsync()) || null;
+          if (!pdfPath) {
+            this._notify("That PDF's file is not available on this computer.");
+            return null;
+          }
+          const spawned = await this._spawnServe(pdfPath);
+          proc = spawned.proc;
+          const base = this._readerDeps(win, undefined as never, attachment as unknown as ZItem, pdfPath, spawned.proc, spawned.frameDir);
+          const shim: ZoteroTabs = {
+            add: () => ({ id: `glide-pane-${Zotero.Utilities.randomString(6)}`, container }),
+            select: () => {},
+            close: () => hooks.close(),
+            rename: () => {},
+            tabHooks: { restoreState: {} },
+          };
+          // the pane keeps its UI choices (sidebar, tool...) to itself; theme and colors stay shared
+          const shared = base.settings;
+          let local: Partial<GlobalSettings> = { sidebarOpen: false, notesOpen: false };
+          const title = tabTitleForItem(attachment as never, pdfPath);
+          const tab = new ReaderTab({
+            ...base,
+            tabs: shim,
+            title,
+            notes: NO_NOTES,
+            positions: new PositionStore({ get: () => undefined, set: () => {} }),
+            settings: {
+              get: () => ({ ...shared.get(), ...local }),
+              set: (patch) => {
+                const { sidebarOpen, sidebarWidth, sidebarTab, notesOpen, notesWidth, ...rest } = patch;
+                local = { ...local, ...(sidebarOpen !== undefined && { sidebarOpen }), ...(sidebarTab !== undefined && { sidebarTab }), ...(sidebarWidth !== undefined && { sidebarWidth }), ...(notesOpen !== undefined && { notesOpen }), ...(notesWidth !== undefined && { notesWidth }) };
+                if (Object.keys(rest).length) shared.set(rest);
+              },
+            },
+            initial: { pageIndex: target.kind === "same" ? page : 0 },
+            secondary: hooks,
+            onClosed: () => {},
+          });
+          return { tab, pdfPath, title };
+        } catch (error) {
+          if (proc) void Promise.resolve(proc.kill(0)).catch(() => {});
+          this._showLaunchError(error);
+          return null;
+        }
+      },
+    };
   }
 
   /**

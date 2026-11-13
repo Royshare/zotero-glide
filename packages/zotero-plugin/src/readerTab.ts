@@ -42,7 +42,8 @@ interface CiteItem {
   text: string;
   go(): void;
 }
-import { ReaderView, type MenuItem, type OverlayItem, type PagePointer, type PageTheme, type SidebarTab, type Tool } from "./tabView.ts";
+import { SplitFrame } from "./splitView.ts";
+import { ReaderView, type CustomTheme, type SplitMode, type ViewPanelHandlers, type MenuItem, type OverlayItem, type PagePointer, type PageTheme, type SidebarTab, type Tool } from "./tabView.ts";
 
 /** Custom Zotero tab type. NO dash: Zotero splits tab types on "-" (`parseTabType`). */
 export const TAB_TYPE = "glide";
@@ -183,9 +184,44 @@ export interface GlobalSettings {
   color: string;
   notesOpen: boolean;
   notesWidth: number;
+  customThemes: CustomTheme[];
 }
 
-export const DEFAULT_SETTINGS: GlobalSettings = { theme: "auto", sidebarOpen: false, sidebarWidth: 236, sidebarTab: "thumbnails", readingFontSize: 17, color: ANNOTATION_COLORS[0]!.hex, notesOpen: false, notesWidth: 340 };
+export const DEFAULT_SETTINGS: GlobalSettings = { theme: "auto", sidebarOpen: false, sidebarWidth: 236, sidebarTab: "thumbnails", readingFontSize: 17, color: ANNOTATION_COLORS[0]!.hex, notesOpen: false, notesWidth: 340, customThemes: [] };
+
+/** What the second pane of a split shows. */
+export type SplitTarget = { kind: "same" } | { kind: "tab"; pdfPath: string } | { kind: "selected" };
+
+/** Hooks a second-pane reader gets from the reader that owns the split. */
+export interface SecondaryHooks {
+  /** The paper chip's menu: which paper to show, swap, close. */
+  menu(): MenuItem[];
+  close(): void;
+  /** The pane changed the page theme: the owner re-syncs its own view. */
+  themeChanged(): void;
+}
+
+/** Opens readers inside a split pane (implemented by the plugin, which owns the helper processes). */
+export interface SplitHost {
+  open(container: Element, target: SplitTarget, hooks: SecondaryHooks, page: number): Promise<{ tab: ReaderTab; pdfPath: string; title: string } | null>;
+  /** Papers the user may pick for the second pane (besides this one). */
+  choices(self: ReaderTab): Array<{ label: string; target: SplitTarget; pdfPath: string }>;
+}
+
+/** A notes backend for panes that have no notes pane. */
+export const NO_NOTES: NotesBackend = {
+  available: false,
+  parentTitle: () => "",
+  list: () => [],
+  create: async () => null,
+  createFromAnnotations: async () => null,
+  trash: async () => {},
+  showInLibrary: () => {},
+  mountEditor: async () => null,
+  has: () => false,
+  pageLink: () => "",
+  subscribe: () => () => {},
+};
 
 export interface ReaderTabDeps {
   tabs: ZoteroTabs;
@@ -219,6 +255,10 @@ export interface ReaderTabDeps {
   settings: { get(): GlobalSettings; set(patch: Partial<GlobalSettings>): void };
   /** Where to open: a 0-indexed page and/or an annotation to reveal. */
   initial?: { pageIndex?: number; annotationKey?: string };
+  /** Present on the main reader: lets it split. */
+  split?: SplitHost;
+  /** Present when this reader is the second pane of a split. */
+  secondary?: SecondaryHooks;
 }
 
 type Zoom = { mode: "width" | "page" } | { mode: "fixed"; scale: number };
@@ -246,6 +286,12 @@ export class ReaderTab {
   readonly pdfPath: string;
   private readonly d: ReaderTabDeps;
   private readonly view: ReaderView;
+  readonly container: Element;
+  // split view (the main reader owns it; the second pane is a whole ReaderTab of its own)
+  private splitMode: SplitMode = "none";
+  private frame: SplitFrame | null = null;
+  private secondary: { tab: ReaderTab; pdfPath: string; title: string; target: SplitTarget } | null = null;
+  private splitToken = 0;
   private readonly conn: HelperConnection;
   private readonly unsubscribe: () => void;
   private readonly notesUnsubscribe: () => void;
@@ -336,6 +382,7 @@ export class ReaderTab {
       onClose: () => this.dispose(),
     });
     this.tabID = id;
+    this.container = container;
 
     this.view = new ReaderView(
       deps.doc,
@@ -359,6 +406,9 @@ export class ReaderTab {
         search: (q, back) => this.doSearch(q, back),
         searchCleared: () => this.clearSearch(),
         openMenu: (anchor) => this.openMenu(anchor),
+        openViewPanel: (anchor) => this.openViewPanel(anchor),
+        paneMenu: (anchor) => this.d.secondary && this.view.showMenu(anchor, this.d.secondary.menu()),
+        paneClose: () => this.d.secondary?.close(),
         toggleCrop: () => this.toggleCrop(),
         sidebarTab: (t) => this.setSidebarTab(t),
         sidebarResized: (width) => this.d.settings.set({ sidebarWidth: width }),
@@ -388,7 +438,8 @@ export class ReaderTab {
       deps.isMac
     );
     const s = deps.settings.get();
-    this.view.setTheme(s.theme);
+    if (deps.secondary) this.view.setSecondary(deps.title);
+    this.view.setTheme(s.theme, s.customThemes);
     this.view.setColor(s.color);
     this.view.setReadingFontSize(s.readingFontSize);
     this.view.setSidebarOpen(s.sidebarOpen);
@@ -436,7 +487,9 @@ export class ReaderTab {
    * open document; showing it again re-renders what is visible.
    */
   setActive(active: boolean): void {
-    if (this.disposed || active === this.active) return;
+    if (this.disposed) return;
+    this.secondary?.tab.setActive(active);
+    if (active === this.active) return;
     this.active = active;
     if (this.trimTimer !== null) {
       this.d.clearTimeout(this.trimTimer);
@@ -691,7 +744,48 @@ export class ReaderTab {
 
   private setTheme(theme: PageTheme): void {
     this.d.settings.set({ theme });
-    this.view.setTheme(theme);
+    this.syncTheme();
+  }
+
+  /** Re-reads the theme from the settings (after either pane changed it). */
+  syncTheme(): void {
+    const s = this.d.settings.get();
+    this.view.setTheme(s.theme, s.customThemes);
+    this.secondary?.tab.syncTheme();
+    this.d.secondary?.themeChanged();
+  }
+
+  private addCustomTheme(bg: string, fg: string): void {
+    const list = this.d.settings.get().customThemes;
+    const id = `${Date.now().toString(36)}${list.length}`;
+    const next = [...list, { id, name: `Custom ${list.length + 1}`, bg, fg }].slice(-6);
+    this.d.settings.set({ customThemes: next, theme: `custom:${id}` });
+    this.syncTheme();
+  }
+
+  private deleteCustomTheme(id: string): void {
+    const s = this.d.settings.get();
+    const next = s.customThemes.filter((t) => t.id !== id);
+    const theme = s.theme === `custom:${id}` ? "auto" : s.theme;
+    this.d.settings.set({ customThemes: next, theme });
+    this.syncTheme();
+  }
+
+  private openViewPanel(anchor: HTMLElement): void {
+    const h: ViewPanelHandlers = {
+      state: () => {
+        const s = this.d.settings.get();
+        return { reading: this.view.readingMode, scroll: this.arrange.scroll, spread: this.arrange.spread, split: this.splitMode, splitAvailable: !!this.d.split, theme: s.theme, customThemes: s.customThemes };
+      },
+      setReading: (on) => this.setReadingMode(on),
+      setScroll: (scroll) => this.setArrangement({ scroll }),
+      setSpread: (spread) => this.setArrangement({ spread }),
+      setSplit: (m) => void this.setSplit(m),
+      setTheme: (t) => this.setTheme(t),
+      addTheme: (bg, fg) => this.addCustomTheme(bg, fg),
+      deleteTheme: (id) => this.deleteCustomTheme(id),
+    };
+    this.view.showViewPanel(anchor, h);
   }
 
   // ======================================================================= scrolling and rendering
@@ -1049,7 +1143,7 @@ export class ReaderTab {
   }
 
   private ensureImages(page: number): void {
-    if (this.view.themeNow !== "dark" || this.images.has(page) || this.imagesPending.has(page)) return;
+    if (!this.view.recolors || this.images.has(page) || this.imagesPending.has(page)) return;
     this.imagesPending.add(page);
     void this.conn.send({ cmd: "images", page });
   }
@@ -2058,6 +2152,102 @@ export class ReaderTab {
     return selectionText(this.texts, { page, line: 0, ch: 0 }, { page, line: last, ch: codePoints(t.lines[last]!.t).length }).split("\n").filter((s) => s.trim());
   }
 
+  // ======================================================================= split view
+  /**
+   * Split view compares two places side by side. The second pane is a complete reader of its own (its own helper
+   * process, scroll, zoom and search), by default on the same paper at the current page, and it can be pointed at
+   * another open paper or at the paper selected in Zotero. See docs/adr/005-split-view.md.
+   */
+  private async setSplit(mode: SplitMode): Promise<void> {
+    if (this.d.secondary || !this.d.split) return;
+    if (mode === this.splitMode) return;
+    const token = ++this.splitToken;
+    if (mode === "none") {
+      this.closeSplit();
+      return;
+    }
+    if (!this.frame) {
+      this.frame = new SplitFrame(this.d.doc, this.container, () => this.relayoutSoon());
+    }
+    this.splitMode = mode;
+    this.frame.setMode(mode);
+    this.relayoutSoon();
+    if (!this.secondary) await this.openSecondary({ kind: "same" }, token);
+  }
+
+  private async openSecondary(target: SplitTarget, token = this.splitToken): Promise<void> {
+    const frame = this.frame;
+    const host = this.d.split;
+    if (!frame || !host) return;
+    const hooks: SecondaryHooks = {
+      menu: () => this.paneMenu(),
+      close: () => void this.setSplit("none"),
+      themeChanged: () => this.syncTheme(),
+    };
+    const opened = await host.open(frame.paneB, target, hooks, this.pageNow);
+    if (!opened) {
+      if (token === this.splitToken && !this.secondary) this.closeSplit();
+      return;
+    }
+    if (token !== this.splitToken || this.disposed) {
+      opened.tab.closePane();
+      return;
+    }
+    this.secondary = { ...opened, target };
+    this.relayoutSoon();
+  }
+
+  /** Items of the second pane's paper chip. */
+  private paneMenu(): MenuItem[] {
+    const cur = this.secondary;
+    const items: MenuItem[] = [
+      { label: `This paper: ${this.d.title}`, icon: "file-text", checked: cur?.target.kind === "same", run: () => this.switchPane({ kind: "same" }) },
+    ];
+    for (const c of this.d.split?.choices(this) ?? []) {
+      items.push({ label: c.label, icon: "book-open", checked: cur?.target.kind === "tab" && cur.pdfPath === c.pdfPath, run: () => this.switchPane(c.target) });
+    }
+    items.push(
+      { label: "Paper selected in Zotero library", icon: "external-link", run: () => this.switchPane({ kind: "selected" }) },
+      { separator: true, label: "" },
+      { label: "Swap panes", icon: "arrow-left-right", run: () => this.frame?.swap() },
+      { label: "Close split view", icon: "x", run: () => void this.setSplit("none") }
+    );
+    return items;
+  }
+
+  private switchPane(target: SplitTarget): void {
+    const old = this.secondary;
+    const token = ++this.splitToken;
+    this.secondary = null;
+    old?.tab.closePane();
+    void this.openSecondary(target, token);
+  }
+
+  private closeSplit(): void {
+    this.splitToken++;
+    this.splitMode = "none";
+    const sec = this.secondary;
+    this.secondary = null;
+    sec?.tab.closePane();
+    this.frame?.dispose();
+    this.frame = null;
+    this.relayoutSoon();
+    this.view.focus();
+  }
+
+  private relayoutSoon(): void {
+    this.d.setTimeout(() => {
+      if (this.disposed) return;
+      this.view.sendViewport();
+      this.relayout();
+    }, 30);
+  }
+
+  /** Closes this reader when it is the second pane of a split (the owner already dropped it). */
+  closePane(): void {
+    this.dispose();
+  }
+
   // ======================================================================= menu and actions
   private openMenu(anchor: HTMLElement): void {
     const s = this.d.settings.get();
@@ -2065,20 +2255,6 @@ export class ReaderTab {
       { label: "Rotate right", icon: "rotate-cw", run: () => this.rotate(90) },
       { label: "Rotate left", icon: "rotate-ccw", run: () => this.rotate(-90) },
       { label: "Crop white margins", icon: "crop", checked: !!this.settings.insets, run: () => this.toggleCrop() },
-      { separator: true, label: "" },
-      { label: "Vertical scrolling", checked: this.arrange.scroll === "vertical", run: () => this.setArrangement({ scroll: "vertical" }) },
-      { label: "Wrapped scrolling (several pages per row)", checked: this.arrange.scroll === "wrapped", run: () => this.setArrangement({ scroll: "wrapped" }) },
-      { separator: true, label: "" },
-      { label: "No spreads (single pages)", checked: this.arrange.spread === "none", run: () => this.setArrangement({ spread: "none" }) },
-      { label: "Odd spreads (1-2, 3-4, …)", checked: this.arrange.spread === "odd", run: () => this.setArrangement({ spread: "odd" }) },
-      { label: "Even spreads (1, 2-3, 4-5, …)", checked: this.arrange.spread === "even", run: () => this.setArrangement({ spread: "even" }) },
-      { separator: true, label: "" },
-      { label: "Match Zotero (auto)", icon: "sun", checked: s.theme === "auto", run: () => this.setTheme("auto") },
-      { label: "Light pages", icon: "sun", checked: s.theme === "light", run: () => this.setTheme("light") },
-      { label: "Dark pages", icon: "moon", checked: s.theme === "dark", run: () => this.setTheme("dark") },
-      { label: "Black pages (inverted)", icon: "moon", checked: s.theme === "black", run: () => this.setTheme("black") },
-      { label: "Sepia pages", icon: "book-open", checked: s.theme === "sepia", run: () => this.setTheme("sepia") },
-      { label: "Reading mode (reflowed text)", icon: "file-text", checked: this.view.readingMode, run: () => this.setReadingMode(!this.view.readingMode) },
       { separator: true, label: "" },
       { label: "Select all text", run: () => this.selectAll() },
       { label: "Copy citation", icon: "quote", run: () => void this.d.host.copyCitation() },
@@ -2185,6 +2361,12 @@ export class ReaderTab {
     if (this.disposed) return;
     this.savePositionNow();
     this.disposed = true;
+    this.splitToken++;
+    const sec = this.secondary;
+    this.secondary = null;
+    sec?.tab.closePane();
+    this.frame?.dispose();
+    this.frame = null;
     for (const t of [this.trimTimer, this.gcTimer, this.renderTimer, this.saveTimer, this.readingTimer]) if (t !== null) this.d.clearTimeout(t);
     this.unsubscribe();
     this.notesUnsubscribe();
