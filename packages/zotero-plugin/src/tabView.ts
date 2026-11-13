@@ -13,6 +13,7 @@
 import { ANNOTATION_COLORS } from "./annotations.ts";
 import { createGlideMark, createIcon, type IconName } from "./icons.ts";
 import type { Layout } from "./layout.ts";
+import { relativeDate, type NoteSummary } from "./notes.ts";
 import type { OutlineNode, Rect } from "./protocol.ts";
 
 const XHTML = "http://www.w3.org/1999/xhtml";
@@ -60,6 +61,14 @@ export interface MenuItem {
   run?: () => void;
 }
 
+/** What the notes pane's list shows. */
+export interface NotesListState {
+  /** false for a PDF without a parent item: notes can't be created */
+  available: boolean;
+  parentTitle: string;
+  notes: NoteSummary[];
+}
+
 export interface PagePointer {
   type: "down" | "move" | "up" | "dblclick" | "leave" | "contextmenu";
   clientX: number;
@@ -104,6 +113,19 @@ export interface ViewEvents {
   /** Right-click on a sidebar card. */
   annotationMenu(key: string, clientX: number, clientY: number): void;
   outlineClick(node: OutlineNode): void;
+  toggleNotes(): void;
+  notesResized(width: number): void;
+  noteOpen(id: number): void;
+  noteNew(): void;
+  /** The editor's back arrow: to the list of notes. */
+  noteBack(): void;
+  noteMenu(id: number, clientX: number, clientY: number): void;
+  noteInsertPageLink(): void;
+  noteShowInLibrary(): void;
+  /** The "add to note" button on a sidebar annotation card. */
+  annotationToNote(key: string, clientX: number, clientY: number): void;
+  /** What to put on the drag clipboard for an annotation card (Zotero's `zotero/annotation` JSON), or null. */
+  annotationDragData(key: string): string | null;
 }
 
 const DARK_BG = [0x2f, 0x33, 0x3d] as const;
@@ -176,6 +198,26 @@ const CSS = `
 .fr-main{display:flex;flex:1;min-height:0}
 .fr-side{width:var(--fr-sidebar-width,236px);flex:none;display:none;flex-direction:column;border-inline-end:1px solid var(--fr-border);min-height:0;position:relative}
 .fr-root[data-sidebar=open] .fr-side{display:flex}
+.fr-notes{width:var(--fr-notes-width,340px);flex:none;display:none;flex-direction:column;border-inline-start:1px solid var(--fr-border);min-height:0;position:relative;background:var(--fr-bg)}
+.fr-root[data-notes=open] .fr-notes{display:flex}
+.fr-notes-resize{position:absolute;z-index:2;inset-block:0;inset-inline-start:-4px;width:8px;cursor:ew-resize;touch-action:none}
+.fr-notes-head{display:flex;align-items:center;gap:2px;padding:4px;border-bottom:1px solid var(--fr-border);min-height:34px;box-sizing:border-box;flex:none}
+.fr-notes-title{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600;padding:0 4px}
+.fr-notes[data-mode=list] .fr-notes-editor,.fr-notes[data-mode=editor] .fr-notes-body{display:none}
+.fr-notes[data-mode=list] [data-editor-only],.fr-notes[data-mode=editor] [data-list-only]{display:none}
+.fr-notes-body{flex:1;overflow:auto;min-height:0}
+.fr-notes-editor{flex:1;min-height:0;min-width:0;display:flex;position:relative}
+.fr-notes-parent{padding:8px 10px 6px;font-size:11px;opacity:.65;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fr-note{padding:8px 10px;border-top:1px solid var(--fr-border);cursor:default}
+.fr-note:hover{background:var(--fr-hover)}
+.fr-note-title{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fr-note-preview{opacity:.8;margin-top:2px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow-wrap:anywhere}
+.fr-note-meta{font-size:11px;opacity:.6;margin-top:3px}
+.fr-notes-msg{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:16px;text-align:center;background:var(--fr-bg)}
+.fr-notes .fr-cta{border:1px solid var(--fr-border);border-radius:5px;background:none;color:inherit;font:inherit;padding:3px 12px;height:26px}
+.fr-notes .fr-cta:hover{background:var(--fr-hover)}
+.fr-ann .fr-ann-act{display:inline-flex;vertical-align:middle;min-width:20px;height:18px;padding:0 2px;opacity:.7}
+.fr-ann .fr-ann-act:hover{opacity:1}
 .fr-side-resize{position:absolute;z-index:2;inset-block:0;inset-inline-end:-4px;width:8px;cursor:ew-resize;touch-action:none}
 .fr-side-tabs{display:flex;gap:2px;padding:4px;border-bottom:1px solid var(--fr-border)}
 .fr-side-tabs .fr-btn{flex:1}
@@ -291,6 +333,11 @@ export class ReaderView {
   private readonly toolButtons = new Map<string, HTMLButtonElement>();
   private readonly sideBody: HTMLElement;
   private readonly sideTabs = new Map<SidebarTab, HTMLButtonElement>();
+  private readonly notesPane: HTMLElement;
+  private readonly notesTitle: HTMLElement;
+  private readonly notesBody: HTMLElement;
+  private readonly notesEditor: HTMLElement;
+  private notesButton!: HTMLButtonElement;
   private readonly popup: HTMLElement;
   private readonly message: HTMLElement;
   private readonly reading: HTMLElement;
@@ -410,6 +457,8 @@ export class ReaderView {
     this.searchCount = el("span", "fr-count", "", find);
     btn("chevron-up", "Previous match", () => this.searchInput.value.trim() && ev.search(this.searchInput.value, true), find);
     btn("chevron-down", "Next match", () => this.searchInput.value.trim() && ev.search(this.searchInput.value, false), find);
+    this.notesButton = btn("notebook-pen", "Notes (N)", () => ev.toggleNotes(), right);
+    this.notesButton.setAttribute("aria-pressed", "false");
     const more = btn("more", "View and more", () => ev.openMenu(more), right);
 
     // ---- sidebar + pages
@@ -448,14 +497,53 @@ export class ReaderView {
     this.reading = el("div", "fr-reading", undefined, this.scroller);
     this.readingArticle = el("article", undefined, undefined, this.reading);
 
+    // ---- notes pane (right): the list of the item's notes, or Zotero's note editor for one of them
+    this.notesPane = el("div", "fr-notes", undefined, main);
+    this.notesPane.dataset.mode = "list";
+    const notesResize = el("div", "fr-notes-resize", undefined, this.notesPane);
+    notesResize.title = "Drag to resize notes";
+    const nhead = el("div", "fr-notes-head", undefined, this.notesPane);
+    const nBack = btn("arrow-left", "Back to notes", () => ev.noteBack(), nhead);
+    nBack.dataset.editorOnly = "";
+    this.notesTitle = el("span", "fr-notes-title", "Notes", nhead);
+    const nNew = btn("plus", "New note", () => ev.noteNew(), nhead);
+    nNew.dataset.listOnly = "";
+    const nLink = btn("link", "Insert a link to the current page", () => ev.noteInsertPageLink(), nhead);
+    nLink.dataset.editorOnly = "";
+    const nLib = btn("external-link", "Show in Zotero library", () => ev.noteShowInLibrary(), nhead);
+    nLib.dataset.editorOnly = "";
+    btn("x", "Close notes", () => ev.toggleNotes(), nhead);
+    this.notesBody = el("div", "fr-notes-body", undefined, this.notesPane);
+    this.notesEditor = el("div", "fr-notes-editor", undefined, this.notesPane);
+    let nStartX = 0;
+    let nStartWidth = 340;
+    notesResize.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      nStartX = e.clientX;
+      nStartWidth = this.notesPane.getBoundingClientRect().width;
+      notesResize.setPointerCapture(e.pointerId);
+    });
+    notesResize.addEventListener("pointermove", (e) => {
+      if (!notesResize.hasPointerCapture(e.pointerId)) return;
+      const width = Math.min(720, Math.max(260, Math.round(nStartWidth + nStartX - e.clientX)));
+      this.notesPane.style.width = `${width}px`;
+      ev.notesResized(width);
+    });
+
     this.popup = el("div", "fr-popup", undefined, this.root);
     this.popup.addEventListener("mouseenter", () => (this.popupOver = true));
     this.popup.addEventListener("mouseleave", () => (this.popupOver = false));
     this.message = el("div", "fr-msg", "Opening…", this.root);
 
     // ---- events
-    this.root.addEventListener("keydown", (e) => ev.key(e));
-    this.root.addEventListener("copy", (e) => ev.copy(e));
+    // the note editor lives inside our root: its typing (N, arrows, Cmd+C...) must never reach the reader's shortcuts
+    const fromNotes = (e: Event) => e.composedPath().includes(this.notesPane);
+    this.root.addEventListener("keydown", (e) => {
+      if (!fromNotes(e)) ev.key(e);
+    });
+    this.root.addEventListener("copy", (e) => {
+      if (!fromNotes(e)) ev.copy(e);
+    });
     this.scroller.addEventListener("scroll", () => ev.scrolled(), { passive: true });
     this.scroller.addEventListener(
       "wheel",
@@ -561,6 +649,94 @@ export class ReaderView {
   get sidebarOpen(): boolean {
     return this.root.dataset.sidebar === "open";
   }
+  // -------------------------------------------------------------- notes pane
+  setNotesOpen(open: boolean): void {
+    this.root.dataset.notes = open ? "open" : "closed";
+    this.notesButton.setAttribute("aria-pressed", String(open));
+  }
+  get notesOpen(): boolean {
+    return this.root.dataset.notes === "open";
+  }
+  setNotesWidth(width: number): void {
+    this.root.style.setProperty("--fr-notes-width", `${Math.min(720, Math.max(260, width))}px`);
+    this.notesPane.style.removeProperty("width");
+  }
+  /** Where Zotero's note editor is mounted. */
+  get notesEditorHost(): HTMLElement {
+    return this.notesEditor;
+  }
+  get notesMode(): "list" | "editor" {
+    return this.notesPane.dataset.mode === "editor" ? "editor" : "list";
+  }
+  /** Switches the pane to the editor view (the caller mounts into `notesEditorHost`) or back to the list. */
+  setNotesMode(mode: "list" | "editor", title = "Notes"): void {
+    this.notesPane.dataset.mode = mode;
+    this.notesTitle.textContent = title;
+    this.notesTitle.title = title;
+    if (mode === "list") this.setNotesEditorMessage(null);
+  }
+  setNotesTitle(title: string): void {
+    this.notesTitle.textContent = title;
+    this.notesTitle.title = title;
+  }
+  /** A message over the editor view (loading, or Zotero's editor not available), with an optional action. */
+  setNotesEditorMessage(text: string | null, action?: { label: string; run(): void }): void {
+    this.notesEditor.querySelector(".fr-notes-msg")?.remove();
+    if (text === null) return;
+    const box = this.doc.createElementNS(XHTML, "div") as HTMLElement;
+    box.className = "fr-notes-msg";
+    const t = this.doc.createElementNS(XHTML, "div") as HTMLElement;
+    t.textContent = text;
+    box.append(t);
+    if (action) {
+      const b = this.doc.createElementNS(XHTML, "button") as HTMLButtonElement;
+      b.className = "fr-cta";
+      b.textContent = action.label;
+      b.addEventListener("click", action.run);
+      box.append(b);
+    }
+    this.notesEditor.append(box);
+  }
+
+  renderNotesList(state: NotesListState): void {
+    const body = this.notesBody;
+    body.replaceChildren();
+    const div = (cls: string, text?: string, parent: Element = body) => {
+      const e = this.doc.createElementNS(XHTML, "div") as HTMLElement;
+      e.className = cls;
+      if (text !== undefined) e.textContent = text;
+      parent.append(e);
+      return e;
+    };
+    if (!state.available) {
+      div("fr-empty", "Notes belong to a library item, and this PDF isn’t attached to one. In Zotero, right-click the PDF and choose “Create Parent Item…”, then reopen it here.");
+      return;
+    }
+    if (state.parentTitle) div("fr-notes-parent", state.parentTitle).title = state.parentTitle;
+    if (!state.notes.length) {
+      const empty = div("fr-empty", "No notes yet.");
+      const b = this.doc.createElementNS(XHTML, "button") as HTMLButtonElement;
+      b.className = "fr-cta";
+      b.textContent = "New note";
+      b.addEventListener("click", () => this.ev.noteNew());
+      empty.append(this.doc.createElementNS(XHTML, "br"), b);
+      return;
+    }
+    const now = new Date();
+    for (const n of state.notes) {
+      const row = div("fr-note");
+      div("fr-note-title", n.title, row);
+      if (n.preview) div("fr-note-preview", n.preview, row);
+      div("fr-note-meta", relativeDate(n.modified, now), row);
+      row.addEventListener("click", () => this.ev.noteOpen(n.id));
+      row.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.ev.noteMenu(n.id, e.clientX, e.clientY);
+      });
+    }
+  }
+
   get viewport(): { width: number; height: number; left: number; top: number } {
     const r = this.scroller.getBoundingClientRect();
     return { width: this.scroller.clientWidth, height: this.scroller.clientHeight, left: r.left, top: r.top };
@@ -1065,6 +1241,27 @@ export class ReaderView {
       const meta = this.doc.createElementNS(XHTML, "div") as HTMLElement;
       meta.className = "fr-ann-meta";
       meta.textContent = `${a.kind[0]!.toUpperCase()}${a.kind.slice(1)} · page ${a.pageLabel || a.page + 1}`;
+      if (!a.external) {
+        const act = this.doc.createElementNS(XHTML, "button") as HTMLButtonElement;
+        act.className = "fr-btn fr-ann-act";
+        act.title = "Add to note";
+        act.setAttribute("aria-label", "Add to note");
+        act.append(createIcon(this.doc, "notebook-pen", 13));
+        act.addEventListener("click", (e) => {
+          e.stopPropagation();
+          this.ev.annotationToNote(a.key, e.clientX, e.clientY);
+        });
+        meta.append(act);
+        // dragging a card into the open note inserts it, as in Zotero's own reader
+        card.draggable = true;
+        card.addEventListener("dragstart", (e) => {
+          const data = this.ev.annotationDragData(a.key);
+          if (!data || !e.dataTransfer) return e.preventDefault();
+          e.dataTransfer.setData("zotero/annotation", data);
+          e.dataTransfer.setData("text/plain", a.text || a.comment);
+          e.dataTransfer.effectAllowed = "copy";
+        });
+      }
       if (a.external) {
         card.dataset.external = "true";
         const badge = this.doc.createElementNS(XHTML, "span") as HTMLElement;

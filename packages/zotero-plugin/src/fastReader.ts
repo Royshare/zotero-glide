@@ -42,7 +42,7 @@ import { buildServeArgs, helperEnvironment, type DockGeometry } from "./buildArg
 import type { HelperProcess } from "./helperConnection.ts";
 import { ReaderTab, TAB_TYPE, type HostActions, type ZoteroTabs } from "./readerTab.ts";
 import { PositionStore } from "./positionStore.ts";
-import { createAnnotationBackend, createSettingsStore, parseTrimDelayMs, readerLocation, type AttachmentApi } from "./zoteroAdapters.ts";
+import { createAnnotationBackend, createNotesBackend, createSettingsStore, parseTrimDelayMs, readerLocation, type AttachmentApi } from "./zoteroAdapters.ts";
 import { withoutTabType, type SessionTab } from "./sessionState.ts";
 
 type LibraryMenuContext = _ZoteroTypes.MenuManager.LibraryMenuContext;
@@ -382,6 +382,7 @@ class FastReaderPlugin {
           }
         },
         annotations: createAnnotationBackend(Zotero as never, attachment as unknown as AttachmentApi, (m) => this._notify(m)),
+        notes: createNotesBackend(Zotero as never, attachment as unknown as AttachmentApi, win.document, (m) => this._notify(m)),
         host: this._hostActions(attachment as unknown as ZItem, pdfPath),
         positions: new PositionStore({
           get: () => (Zotero.Prefs.get("fastReader.positions") as string | undefined) || undefined,
