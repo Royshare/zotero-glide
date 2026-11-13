@@ -1875,8 +1875,8 @@ export class ReaderTab {
       { label: "Create Zotero note from all annotations", icon: "file-text", disabled: !this.annotations.length, run: () => void this.d.annotations.createNote(this.annotations.map((a) => a.key)) },
       { separator: true, label: "" },
       { label: "Export PDF with annotations…", icon: "download", run: () => void this.exportAnnotated() },
-      { label: "Open in system viewer (print)", icon: "printer", run: () => this.d.host.openExternally() },
-      { label: "Open in Zotero’s own reader at this page", icon: "external-link", run: () => this.d.host.openInZoteroReader(this.pageNow) },
+      { label: "Open in system viewer", icon: "external-link", run: () => this.d.host.openExternally() },
+      { label: "Open in Zotero’s own reader at this page", icon: "book-open", run: () => this.d.host.openInZoteroReader(this.pageNow) },
     ];
     this.view.showMenu(anchor, items);
   }
