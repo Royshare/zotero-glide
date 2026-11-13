@@ -244,7 +244,7 @@ const CSS = `
 .fr-bar{display:flex;align-items:center;gap:2px;padding:3px 8px;flex:none;border-bottom:1px solid var(--fr-border);min-height:34px}
 .fr-grp{display:flex;align-items:center;gap:2px}
 /* adaptive toolbar: .fr-compact controls exist only in a narrow reader (a split pane), where .fr-full ones fold away */
-.fr-compact{display:none}
+.fr-root .fr-compact{display:none}
 .fr-root[data-compact=true] .fr-compact{display:inline-flex}
 .fr-root[data-compact=true] .fr-full,.fr-root[data-compact=true] .fr-brand{display:none}
 .fr-zoom-compact{gap:2px;font-size:12px}
