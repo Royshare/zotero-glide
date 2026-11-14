@@ -122,15 +122,17 @@ export interface Layout {
   total: number;
   /** width of the widest row, px */
   maxWidth: number;
+  /** px per point each page was laid out at; all equal unless a fit mode scaled every page on its own */
+  scales: number[];
 }
 
 /**
- * Pages at `scale` px per point with `gap` px between them and `margin` px around. Pages form spreads
+ * Pages at `scale` px per point (one number for all pages, or one per page) with `gap` px between them and `margin` px around. Pages form spreads
  * (see `spreadGroups`); spreads are stacked one per row ("vertical") or packed into rows of up to
  * `availWidth` px ("wrapped"). `tops` never decreases with the page index, which the lookups below rely on.
  */
 export function computeLayout(
-  pages: PageInfo[], view: ViewSettings, scale: number, gap = 8, margin = 8,
+  pages: PageInfo[], view: ViewSettings, scale: number | number[], gap = 8, margin = 8,
   arrange: Arrangement = DEFAULT_ARRANGEMENT, availWidth = Infinity,
 ): Layout {
   const n = pages.length;
@@ -138,10 +140,11 @@ export function computeLayout(
   const lefts = new Array<number>(n).fill(0);
   const heights = new Array<number>(n).fill(0);
   const widths = new Array<number>(n).fill(0);
+  const scales = pages.map((_, i) => (typeof scale === "number" ? scale : scale[i] ?? 1));
   pages.forEach((p, i) => {
     const s = viewSize(p, view);
-    widths[i] = s.w * scale;
-    heights[i] = s.h * scale;
+    widths[i] = s.w * scales[i]!;
+    heights[i] = s.h * scales[i]!;
   });
   const units = spreadGroups(n, arrange.spread).map((idx) => ({
     idx,
@@ -172,7 +175,7 @@ export function computeLayout(
     }
     y += h + gap;
   }
-  return { tops, lefts, heights, widths, total: Math.max(0, y - gap) + margin, maxWidth };
+  return { tops, lefts, heights, widths, total: Math.max(0, y - gap) + margin, maxWidth, scales };
 }
 
 /** Index of the page that contains scroll offset `y`, or the nearest page if `y` is in a gap. */
@@ -278,13 +281,32 @@ export function capRenderScale(widthPt: number, heightPt: number, want: number, 
 }
 
 /**
- * The page that "fit width" / "fit page" are measured against: the one with the median displayed width
- * (ties: the earliest). It must NOT depend on scroll position: fitting the *current* page made the scale
- * depend on the layout and the layout depend on the scale, which diverged to the zoom limit on documents that
- * mix page sizes (found with a real article that has a 595pt and a 425pt page).
+ * Per-page scales for the fit modes: every page (or, in a spread, every spread) is fitted to the viewport on
+ * its own, so a landscape page among portrait ones fills the width just like they do, instead of inheriting
+ * one document-wide scale. Each scale depends only on that page's own size and the viewport, never on the
+ * layout or the scroll position, so there is no feedback loop (fitting a single shared scale to the *current*
+ * page made the scale depend on the layout and the layout on the scale, which diverged to the zoom limit on a
+ * real article that mixes a 595pt and a 425pt page).
  */
-export function referencePage(pages: PageInfo[], view: ViewSettings): number {
-  if (pages.length === 0) return 0;
-  const order = pages.map((p, i) => ({ i, w: viewSize(p, view).w })).sort((a, b) => a.w - b.w || a.i - b.i);
-  return order[Math.floor((order.length - 1) / 2)]!.i;
+export function fitScales(
+  mode: "width" | "page",
+  pages: PageInfo[],
+  view: ViewSettings,
+  spread: SpreadMode,
+  viewportWidth: number,
+  viewportHeight: number,
+  padding = 24,
+  gap = 8,
+): number[] {
+  const out = new Array<number>(pages.length).fill(1);
+  for (const group of spreadGroups(pages.length, spread)) {
+    const sizes = group.map((i) => viewSize(pages[i]!, view));
+    const w = sizes.reduce((a, s) => a + s.w, 0);
+    const h = Math.max(...sizes.map((s) => s.h));
+    // a spread shares one scale so its pages sit side by side at the same size
+    const byWidth = (viewportWidth - padding - gap * (group.length - 1)) / w;
+    const scale = clampScale(mode === "width" ? byWidth : Math.min(byWidth, (viewportHeight - padding) / h));
+    for (const i of group) out[i] = scale;
+  }
+  return out;
 }

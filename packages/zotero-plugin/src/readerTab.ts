@@ -18,7 +18,7 @@ import {
 } from "./annotations.ts";
 import { HelperConnection, type HelperProcess } from "./helperConnection.ts";
 import {
-  capRenderScale, captureAnchor, DEFAULT_ARRANGEMENT, isScrollMode, isSpreadMode, type Arrangement, type ScrollMode, type SpreadMode, clampScale, clipRect, computeLayout, currentPage, DEFAULT_VIEW, fitScale, pageAtOffset, referencePage, rectToView,
+  capRenderScale, captureAnchor, DEFAULT_ARRANGEMENT, isScrollMode, isSpreadMode, type Arrangement, type ScrollMode, type SpreadMode, clampScale, clipRect, computeLayout, currentPage, DEFAULT_VIEW, fitScales, pageAtOffset, rectToView,
   scrollTopForAnchor, viewSize, viewToPage, visibleRange, type Layout, type ScrollAnchor, type ViewSettings,
 } from "./layout.ts";
 import type { PositionStore, SavedPosition } from "./positionStore.ts";
@@ -325,7 +325,7 @@ export class ReaderTab {
   private zoom: Zoom = { mode: "width" };
   private scale = 1; // css px per point
   private arrange: Arrangement = { ...DEFAULT_ARRANGEMENT };
-  private layout: Layout = { tops: [], lefts: [], heights: [], widths: [], total: 0, maxWidth: 0 };
+  private layout: Layout = { tops: [], lefts: [], heights: [], widths: [], total: 0, maxWidth: 0, scales: [] };
   private tool: Tool = null;
   private areaDrag: { page: number; x0: number; y0: number; x1: number; y1: number } | null = null;
   private imageUrls = new Map<string, string>();
@@ -608,15 +608,22 @@ export class ReaderTab {
     this.requestVisible();
   }
 
-  private computeScale(): number {
+  /**
+   * Pixels per point for each page. Fixed zoom: one scale for all. Fit width / fit page: every page is fitted on
+   * its own (see fitScales), so the current page really fills the width even when the document mixes
+   * landscape and portrait pages. The scrollbar gutter is reserved (scrollbar-gutter: stable), so clientWidth
+   * is the usable width.
+   */
+  private computeScales(): number | number[] {
     const vp = this.viewport;
     if (!vp || !this.pages.length) return 1;
     if (this.zoom.mode === "fixed") return clampScale(this.zoom.scale);
-    // Fit against a fixed reference page, never the current one (see referencePage: a scale that depends on
-    // the current page diverges on documents that mix page sizes). The scrollbar gutter is reserved
-    // (scrollbar-gutter: stable), so clientWidth is the usable width.
-    const page = this.pages[referencePage(this.pages, this.settings)]!;
-    return clampScale(fitScale(this.zoom.mode, page, this.settings, vp.w, vp.h, 24, this.arrange.spread === "none" ? 1 : 2));
+    return fitScales(this.zoom.mode, this.pages, this.settings, this.arrange.spread, vp.w, vp.h);
+  }
+
+  /** The scale of one page as laid out (the layout is the source of truth in fit modes). */
+  private scaleOf(page: number): number {
+    return this.layout.scales[page] ?? this.scale;
   }
 
   /** Recomputes scale and layout, keeping the part of the document under the viewport centre in place. */
@@ -625,8 +632,8 @@ export class ReaderTab {
     if (!this.pages.length) return;
     const vh = this.view.viewport.height;
     const anchor: ScrollAnchor | null = this.layout.tops.length ? captureAnchor(this.layout, this.view.scroller.scrollTop, vh / 2) : null;
-    this.scale = this.computeScale();
-    this.layout = this.computeLayoutNow();
+    this.layout = this.computeLayoutNow(this.computeScales());
+    this.scale = this.layout.scales[this.pageNow] ?? this.layout.scales[0] ?? 1;
     this.view.applyLayout(this.layout);
     if (anchor && this.initialDone) this.view.scroller.scrollTop = scrollTopForAnchor(this.layout, anchor);
     this.view.setZoomLabel(this.scale * 100);
@@ -635,8 +642,8 @@ export class ReaderTab {
     this.scheduleRender(this.rendered.size ? 90 : 0);
   }
 
-  private computeLayoutNow(): Layout {
-    return computeLayout(this.pages, this.settings, this.scale, 8, 8, this.arrange, this.viewport?.w ?? Infinity);
+  private computeLayoutNow(scale: number | number[] = this.scale): Layout {
+    return computeLayout(this.pages, this.settings, scale, 8, 8, this.arrange, this.viewport?.w ?? Infinity);
   }
 
   setArrangement(next: Partial<Arrangement>): void {
@@ -809,6 +816,12 @@ export class ReaderTab {
       if (cur !== this.pageNow) {
         this.pageNow = cur;
         this.view.markCurrentThumb(cur);
+        // in a fit mode each page has its own scale; the zoom label and +/- follow the page being read
+        const here = this.layout.scales[cur];
+        if (here !== undefined && here !== this.scale) {
+          this.scale = here;
+          this.view.setZoomLabel(here * 100);
+        }
       }
       this.view.setPageInfo(this.pageNow + 1, this.pages.length);
       this.requestVisible();
@@ -822,7 +835,7 @@ export class ReaderTab {
   /** Pixels per point to render a page at: the screen resolution, capped so one frame stays a sane size. */
   private renderScaleFor(page: number): number {
     const s = viewSize(this.pages[page]!, this.settings);
-    return capRenderScale(s.w, s.h, this.scale * (this.viewport?.dpr ?? 1));
+    return capRenderScale(s.w, s.h, this.scaleOf(page) * (this.viewport?.dpr ?? 1));
   }
 
   /** Identifies what a drawn bitmap shows; a bitmap with another key is stale. (The cap makes it per page.) */
@@ -1217,7 +1230,8 @@ export class ReaderTab {
   // ======================================================================= overlays
   private pxRect(page: number, r: Rect): Rect {
     const v = rectToView(this.pages[page]!, this.settings, r);
-    return [v[0] * this.scale, v[1] * this.scale, v[2] * this.scale, v[3] * this.scale];
+    const k = this.scaleOf(page);
+    return [v[0] * k, v[1] * k, v[2] * k, v[3] * k];
   }
 
   private overlaysFor(page: number): OverlayItem[] {
@@ -1277,7 +1291,7 @@ export class ReaderTab {
     const el = this.view.pageElement(page);
     if (!el) return null;
     const r = el.getBoundingClientRect();
-    const [x, y] = viewToPage(this.pages[page]!, this.settings, (clientX - r.left) / this.scale, (clientY - r.top) / this.scale);
+    const [x, y] = viewToPage(this.pages[page]!, this.settings, (clientX - r.left) / this.scaleOf(page), (clientY - r.top) / this.scaleOf(page));
     return { x, y };
   }
 
