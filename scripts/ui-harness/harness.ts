@@ -3,7 +3,7 @@
 
 /// <reference lib="dom" />
 // Browser side of the UI harness (see server.mjs): the real ReaderTab with Zotero stood in by in-memory fakes.
-import { ReaderTab, DEFAULT_SETTINGS, type AnnotationRecord, type GlobalSettings, type NotesBackend, type NoteEditorHandle, type ReaderTabDeps } from "../../packages/zotero-plugin/src/readerTab.ts";
+import { NO_NOTES, ReaderTab, DEFAULT_SETTINGS, type AnnotationRecord, type GlobalSettings, type NotesBackend, type NoteEditorHandle, type ReaderTabDeps } from "../../packages/zotero-plugin/src/readerTab.ts";
 import { PositionStore } from "../../packages/zotero-plugin/src/positionStore.ts";
 import { buildMarkup, buildNote, type AnnotationDraft } from "../../packages/zotero-plugin/src/annotations.ts";
 import { noteSummary, pageLinkHtml } from "../../packages/zotero-plugin/src/notes.ts";
@@ -13,9 +13,11 @@ const params = new URLSearchParams(location.search);
 const pdf = params.get("pdf") ?? "";
 
 async function main() {
-  const { id, frameDir } = (await (await fetch(`/open?pdf=${encodeURIComponent(pdf)}`)).json()) as { id: string; frameDir: string };
-
-  const proc: HelperProcess = {
+  const spawnHelper = async (path: string) => {
+    const { id, frameDir } = (await (await fetch(`/open?pdf=${encodeURIComponent(path)}`)).json()) as { id: string; frameDir: string };
+    return { frameDir, proc: makeProc(id) };
+  };
+  const makeProc = (id: string): HelperProcess => ({
     stdin: { write: async (d) => void (await fetch(`/stdin?s=${id}`, { method: "POST", body: d })), close: async () => {} },
     stdout: {
       readString: async () => {
@@ -27,7 +29,8 @@ async function main() {
     },
     kill: async () => {},
     wait: () => new Promise(() => {}),
-  };
+  });
+  const { proc, frameDir } = await spawnHelper(pdf);
 
   // ---- in-memory annotations; the page matrix is applied by the real code, so these are PDF-space like Zotero's
   const records: AnnotationRecord[] = [];
@@ -142,10 +145,32 @@ async function main() {
       chooseExportPath: async () => null,
       openExternally: () => toast("(harness) open in system viewer"),
       notify: toast,
+      listFonts: () => ["Arial", "Courier New", "Georgia", "Helvetica", "Palatino", "Times New Roman"],
     },
     positions: new PositionStore({ get: () => store.pos, set: (v) => { store.pos = v; } }),
     positionKey: "harness/" + pdf,
     settings: { get: () => settings, set: (p) => { settings = { ...settings, ...p }; localStorage.setItem("fr-harness-settings", JSON.stringify(settings)); } },
+  };
+  // split view: the second pane is another reader (same paper by default; `?pdf2=` is offered as "another paper")
+  const pdf2 = params.get("pdf2");
+  deps.split = {
+    choices: () => (pdf2 ? [{ label: pdf2.split("/").pop() ?? "Other", target: { kind: "tab", pdfPath: pdf2 }, pdfPath: pdf2 }] : []),
+    open: async (container, target, hooks, page) => {
+      const path = target.kind === "tab" ? target.pdfPath : pdf;
+      const h = await spawnHelper(path);
+      const title = path.split("/").pop() ?? "PDF";
+      const t = new ReaderTab({
+        ...deps,
+        ...h,
+        tabs: { add: () => ({ id: "harness-pane", container }), select() {}, close() {}, rename() {}, tabHooks: { restoreState: {} } },
+        title, pdfPath: path, notes: NO_NOTES,
+        positions: new PositionStore({ get: () => undefined, set: () => {} }),
+        positionKey: "harness/" + path + "#pane",
+        initial: { pageIndex: target.kind === "same" ? page : 0 },
+        secondary: hooks, split: undefined,
+      });
+      return { tab: t, pdfPath: path, title };
+    },
   };
   const tab = new ReaderTab(deps);
   (window as unknown as { tab: ReaderTab; records: AnnotationRecord[] }).tab = tab;

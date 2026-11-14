@@ -16,7 +16,7 @@ import type { KeyValueStorage } from "./positionStore.ts";
 
 // ---------------------------------------------------------------- settings (pure)
 
-const THEMES = ["auto", "light", "dark", "black", "sepia"] as const;
+const THEMES = ["auto", "light", "snow", "dark", "black", "sepia"] as const;
 const TABS = ["thumbnails", "annotations", "outline", "images"] as const;
 
 /** Reads the settings pref defensively: any bad or missing field falls back to its default. */
@@ -29,12 +29,20 @@ export function parseSettings(raw: string | undefined): GlobalSettings {
     /* corrupt pref: defaults */
   }
   const d = DEFAULT_SETTINGS;
+  const hex = (x: unknown): x is string => typeof x === "string" && /^#[0-9a-f]{6}$/i.test(x);
+  const customThemes = (Array.isArray(v.customThemes) ? v.customThemes : [])
+    .filter((t): t is { id: string; name: string; bg: string; fg: string } => !!t && typeof t === "object" && typeof (t as { id?: unknown }).id === "string" && /^[a-z0-9]{1,16}$/.test((t as { id: string }).id) && hex((t as { bg?: unknown }).bg) && hex((t as { fg?: unknown }).fg))
+    .slice(0, 6)
+    .map((t) => ({ id: t.id, name: typeof t.name === "string" && t.name ? t.name.slice(0, 24) : "Custom", bg: t.bg, fg: t.fg }));
+  const themeOk = (THEMES as readonly unknown[]).includes(v.theme) || (typeof v.theme === "string" && v.theme.startsWith("custom:") && customThemes.some((t) => `custom:${t.id}` === v.theme));
   return {
-    theme: (THEMES as readonly unknown[]).includes(v.theme) ? (v.theme as GlobalSettings["theme"]) : d.theme,
+    theme: themeOk ? (v.theme as GlobalSettings["theme"]) : d.theme,
+    customThemes,
     sidebarOpen: typeof v.sidebarOpen === "boolean" ? v.sidebarOpen : d.sidebarOpen,
     sidebarWidth: typeof v.sidebarWidth === "number" && Number.isFinite(v.sidebarWidth) ? Math.min(600, Math.max(180, v.sidebarWidth)) : d.sidebarWidth,
     sidebarTab: (TABS as readonly unknown[]).includes(v.sidebarTab) ? (v.sidebarTab as GlobalSettings["sidebarTab"]) : d.sidebarTab,
     readingFontSize: typeof v.readingFontSize === "number" && Number.isFinite(v.readingFontSize) ? Math.min(32, Math.max(12, v.readingFontSize)) : d.readingFontSize,
+    readingFont: typeof v.readingFont === "string" && v.readingFont.length <= 80 && !/["'\\;{}<>()\n]/.test(v.readingFont) ? v.readingFont.trim() : d.readingFont,
     color: typeof v.color === "string" && /^#[0-9a-f]{6}$/i.test(v.color) ? v.color : d.color,
     notesOpen: typeof v.notesOpen === "boolean" ? v.notesOpen : d.notesOpen,
     notesWidth: typeof v.notesWidth === "number" && Number.isFinite(v.notesWidth) ? Math.min(720, Math.max(260, v.notesWidth)) : d.notesWidth,
