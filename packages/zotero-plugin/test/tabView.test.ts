@@ -24,6 +24,8 @@ class ElementStub extends EventTarget {
   append(...children: ElementStub[]): void { this.children.push(...children); }
   replaceChildren(...children: ElementStub[]): void { this.children = children; }
   setAttribute(): void {}
+  closest(): null { return null; }
+  contains(other: unknown): boolean { return other === this; }
   getBoundingClientRect() { return { left: 100, top: 50, right: 1100, bottom: 850, width: 1000, height: 800 }; }
 }
 
@@ -134,4 +136,28 @@ test("clearing popups also closes the overlay menu", () => {
   assert.equal(view.popupOpen, true);
   view.hidePopups();
   assert.equal(view.popupOpen, false);
+});
+
+test("pressing a toolbar button whose popup is open closes it instead of reopening it", () => {
+  const { view } = fixture();
+  const anchor = new ElementStub("button") as unknown as HTMLElement;
+  const press = (t: unknown) => (view as unknown as { onRootPress(t: unknown): void }).onRootPress(t);
+  const open = () => view.showMenu(anchor, [{ label: "Item" }]);
+
+  open();
+  assert.equal(view.popupOpen, true);
+  // mousedown on the button closes the popup, and the click that follows must not open it again
+  press(anchor);
+  assert.equal(view.popupOpen, false);
+  open();
+  assert.equal(view.popupOpen, false, "the click after the closing mousedown is swallowed");
+  // the next click is an ordinary one
+  open();
+  assert.equal(view.popupOpen, true);
+
+  // pressing elsewhere closes it, and the button then opens it normally
+  press(new ElementStub("div"));
+  assert.equal(view.popupOpen, false);
+  open();
+  assert.equal(view.popupOpen, true);
 });

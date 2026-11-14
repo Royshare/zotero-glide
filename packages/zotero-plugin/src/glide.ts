@@ -40,7 +40,7 @@ import { resolvePdfAttachment, tabTitleForItem, type PdfLikeItem } from "./pdfAt
 import { launchGlide } from "./launchGlide.ts";
 import { buildServeArgs, helperEnvironment, type DockGeometry } from "./buildArgs.ts";
 import type { HelperProcess } from "./helperConnection.ts";
-import { NO_NOTES, ReaderTab, TAB_TYPE, type GlobalSettings, type HostActions, type ReaderTabDeps, type SplitHost, type ZoteroTabs } from "./readerTab.ts";
+import { NO_NOTES, ReaderTab, TAB_TYPE, type GlobalSettings, type HostActions, type PaperChoice, type ReaderTabDeps, type SplitHost, type ZoteroTabs } from "./readerTab.ts";
 import { PositionStore } from "./positionStore.ts";
 import { createAnnotationBackend, createNotesBackend, createSettingsStore, parseTrimDelayMs, readerLocation, type AttachmentApi } from "./zoteroAdapters.ts";
 import { withoutTabType, type SessionTab } from "./sessionState.ts";
@@ -72,6 +72,14 @@ interface TabsWindow {
 interface ZItem {
   id: number;
   parentItemID?: number | false;
+}
+
+/** The parts of a library item the split pane's picker reads to describe a paper. */
+interface PickerItem extends PdfLikeItem {
+  id: number;
+  firstCreator?: string;
+  getField?: (field: string) => string;
+  getBestAttachment?: () => Promise<PdfLikeItem | null | undefined | false>;
 }
 
 const MENU_ID = "glide-open";
@@ -438,7 +446,39 @@ class GlidePlugin {
 
   /** Opens readers inside the second pane of a split view. */
   private _splitHost(win: TabsWindow): SplitHost {
+    /** "Smith, 2021" under the title of a library paper. */
+    const describe = (item: PickerItem, target: PaperChoice["target"]): PaperChoice => {
+      const owner = item.parentItem ? (item.parentItem as PickerItem) : item;
+      const year = /\b(\d{4})\b/.exec(owner.getField?.("date") ?? "")?.[1];
+      const label = (owner.getDisplayTitle?.() || item.getDisplayTitle?.() || "Untitled").replace(/[\u0000-\u001F\u007F-\u009F]/g, "").trim();
+      const sub = [owner.firstCreator, year].filter(Boolean).join(", ");
+      return { label, sub: sub || undefined, target };
+    };
     return {
+      selected: async () => {
+        const pane = Zotero.getActiveZoteroPane() as unknown as { getSelectedItems(): PickerItem[] } | undefined;
+        const picked = pane?.getSelectedItems()?.[0];
+        if (!picked || !(await resolvePdfAttachment(picked))) return null;
+        return describe(picked, { kind: "selected" });
+      },
+      search: async (query) => {
+        const pane = Zotero.getActiveZoteroPane() as unknown as { getSelectedLibraryID?(): number } | undefined;
+        const search = new Zotero.Search({ libraryID: pane?.getSelectedLibraryID?.() ?? Zotero.Libraries.userLibraryID });
+        search.addCondition("quicksearch-titleCreatorYear", "contains", query);
+        const ids = await search.search();
+        const items = (await Zotero.Items.getAsync(ids.slice(0, 60))) as unknown as PickerItem[];
+        // keep only papers that really have a PDF; resolve in parallel but show at most a screenful
+        const found = await Promise.all(items.map(async (it) => ((await resolvePdfAttachment(it)) ? describe(it, { kind: "item", itemID: it.id }) : null)));
+        const seen = new Set<number>();
+        const out: PaperChoice[] = [];
+        for (const c of found) {
+          if (!c || c.target.kind !== "item" || seen.has(c.target.itemID)) continue;
+          seen.add(c.target.itemID);
+          out.push(c);
+          if (out.length >= 15) break;
+        }
+        return out;
+      },
       choices: (self) => {
         const out: ReturnType<SplitHost["choices"]> = [];
         for (const [tab, { title }] of this._papers) if (tab !== self) out.push({ label: title, target: { kind: "tab", pdfPath: tab.pdfPath }, pdfPath: tab.pdfPath });
@@ -452,6 +492,13 @@ class GlidePlugin {
           if (target.kind === "same") {
             const owner = [...this.readerTabs].find((t) => t.container.contains(container));
             attachment = owner ? (this._papers.get(owner)?.attachment ?? null) : null;
+          } else if (target.kind === "item") {
+            const picked = (await Zotero.Items.getAsync(target.itemID)) as unknown as PdfLikeItem | false;
+            attachment = picked ? ((await resolvePdfAttachment(picked)) as unknown as ZItem | null) : null;
+            if (!attachment) {
+              this._notify("That paper has no PDF to open.");
+              return null;
+            }
           } else if (target.kind === "tab") {
             const owner = [...this.readerTabs].find((t) => t.pdfPath === target.pdfPath);
             attachment = owner ? (this._papers.get(owner)?.attachment ?? null) : null;
