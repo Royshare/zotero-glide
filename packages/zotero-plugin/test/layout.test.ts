@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  referencePage, capRenderScale, MAX_FRAME_PIXELS, DEFAULT_VIEW, captureAnchor, clipRect, computeLayout, currentPage, fitScale, pageAtOffset, pageToView, rectToView,
+  fitScales, capRenderScale, MAX_FRAME_PIXELS, DEFAULT_VIEW, captureAnchor, clipRect, computeLayout, currentPage, fitScale, pageAtOffset, pageToView, rectToView,
   scrollTopForAnchor, viewSize, viewToPage, visibleRange, type ViewSettings,
 } from "../src/layout.ts";
 import type { PageInfo, Rotation } from "../src/protocol.ts";
@@ -112,24 +112,43 @@ test("capRenderScale leaves normal renders alone and bounds extreme ones", () =>
   assert.equal(capRenderScale(0, 0, 2), 2, "degenerate sizes don't divide by zero");
 });
 
-test("referencePage is the median-width page, stable and independent of scroll", () => {
-  const mixed = [page(595, 878), page(425, 637), page(595, 878), page(425, 637), page(595, 878)];
-  // widths sorted: 425, 425, 595, 595, 595 -> the median is the first 595-wide page (index 0)
-  assert.equal(referencePage(mixed, DEFAULT_VIEW), 0);
-  assert.equal(referencePage([], DEFAULT_VIEW), 0);
-  assert.equal(referencePage([page(100, 100)], DEFAULT_VIEW), 0);
-  // rotation changes which dimension is the width
-  assert.equal(viewSize(mixed[0]!, { rotation: 90, insets: null }).w, 878);
+test("fit width fits every page on its own, so a landscape page among portrait ones fills the width too", () => {
+  const pages = [page(600, 800), page(800, 600), page(600, 800)];
+  const s = fitScales("width", pages, DEFAULT_VIEW, "none", 624, 700, 24);
+  close(s[0]!, 1);
+  close(s[1]!, 0.75);
+  close(s[2]!, 1);
+  const l = computeLayout(pages, DEFAULT_VIEW, s);
+  for (const w of l.widths) close(w, 600, 1e-9);
+  assert.deepEqual(l.scales, s);
 });
 
-test("fit-width against the reference page is a fixed point: relaying out never changes the scale", () => {
-  const pages = [page(595, 878), page(425, 637), page(595, 878), page(425, 637), page(595, 878), page(425, 637)];
-  const ref = pages[referencePage(pages, DEFAULT_VIEW)]!;
-  const scale = fitScale("width", ref, DEFAULT_VIEW, 1000, 700, 24);
+test("fit page fits both dimensions per page", () => {
+  const pages = [page(600, 800), page(800, 600)];
+  const s = fitScales("page", pages, DEFAULT_VIEW, "none", 1024, 824, 24);
+  close(s[0]!, 1); // 800pt tall page limited by height 800
+  close(s[1]!, 1000 / 800); // landscape: limited by width (1000 / 800 = 1.25 < 800/600)
+});
+
+test("per-page fit scales depend only on the page and viewport, never on the layout or scroll (no runaway)", () => {
+  const pages = [page(595, 878), page(425, 637), page(595, 878), page(425, 637)];
+  const first = fitScales("width", pages, DEFAULT_VIEW, "none", 1000, 700, 24);
   for (let i = 0; i < 5; i++) {
-    // no matter which page is "current", the scale is the same
-    close(fitScale("width", pages[referencePage(pages, DEFAULT_VIEW)]!, DEFAULT_VIEW, 1000, 700, 24), scale);
+    computeLayout(pages, DEFAULT_VIEW, first); // laying out must not feed back into the scales
+    assert.deepEqual(fitScales("width", pages, DEFAULT_VIEW, "none", 1000, 700, 24), first);
   }
+});
+
+test("rotation swaps which dimension fit width measures", () => {
+  const s = fitScales("width", [page(600, 800)], { rotation: 90, insets: null }, "none", 824, 500, 24);
+  close(s[0]!, 1, 1e-9);
+});
+
+test("in a spread both pages share one scale", () => {
+  const pages = [page(600, 800), page(400, 800)];
+  const s = fitScales("width", pages, DEFAULT_VIEW, "odd", 1032, 900, 24, 8);
+  close(s[0]!, 1);
+  close(s[1]!, 1);
 });
 
 test("spread groups follow odd / even conventions", async () => {
