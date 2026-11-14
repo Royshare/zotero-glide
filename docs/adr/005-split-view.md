@@ -29,6 +29,6 @@ the current selection; a notes pane in the second pane.
 The reading (reflow) view uses a font the user picks in the view-options panel ("Reading font"). No font files
 are bundled, so there is nothing to license: the choice is a generic family (Serif, Sans-serif, Monospace) or
 the name of a font already installed on the user's computer. The installed names come from Gecko's
-`nsIFontEnumerator` and feed a datalist; typing any name also works if listing fails. The name is validated
+`nsIFontEnumerator` and fill a drop-down list (each name shown in its own font); if listing fails only the three generic families are offered. The name is validated
 (no quotes, semicolons, braces...) before it reaches a CSS value, and falls back to Georgia/serif if the font
 is missing. Stored as `readingFont` in the settings pref.

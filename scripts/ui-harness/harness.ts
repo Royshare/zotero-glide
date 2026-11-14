@@ -145,6 +145,7 @@ async function main() {
       chooseExportPath: async () => null,
       openExternally: () => toast("(harness) open in system viewer"),
       notify: toast,
+      listFonts: () => ["Arial", "Courier New", "Georgia", "Helvetica", "Palatino", "Times New Roman"],
     },
     positions: new PositionStore({ get: () => store.pos, set: (v) => { store.pos = v; } }),
     positionKey: "harness/" + pdf,

@@ -406,7 +406,7 @@ li[data-open=true]>.fr-ol-row .fr-twisty svg{transform:rotate(90deg)}
 .fr-vp-row{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:34px}
 .fr-vp-label{font-size:14px}
 .fr-vp-head{margin:6px 0 8px}
-.fr-font-input{width:150px;height:24px;box-sizing:border-box;font:inherit;border:1px solid var(--fr-border);border-radius:5px;background:var(--fr-bg);color:inherit;padding:0 6px}
+.fr-font-input{width:160px;height:24px;box-sizing:border-box;font:inherit;border:1px solid var(--fr-border);border-radius:5px;background:var(--fr-bg);color:inherit;padding:0 6px}
 .fr-vp-hr{border:none;border-top:1px solid var(--fr-border);margin:6px -12px}
 .fr-seg{display:flex;gap:1px;padding:2px;border-radius:8px;background:var(--fr-hover)}
 .fr-seg-btn{display:inline-flex;align-items:center;justify-content:center;width:44px;height:28px;border:none;border-radius:6px;background:none;color:inherit;opacity:.8;cursor:default}
@@ -1413,28 +1413,32 @@ export class ReaderView {
         h.setReading(!st.reading);
         this.hidePopups();
       });
-      // font: only fonts the user already has (nothing is bundled); free text works even if they can't be listed
+      // font: only fonts the user already has (nothing is bundled), chosen from a list
       const fontRow = mk("div", "fr-vp-row", panel);
       mk("span", "fr-vp-label", fontRow, "Reading font");
-      const fontInput = mk("input", "fr-font-input", fontRow);
-      fontInput.type = "text";
-      fontInput.placeholder = "Default (serif)";
-      fontInput.value = st.readingFont;
-      fontInput.title = "Type or pick a font installed on this computer. Empty = default.";
-      const listId = `fr-fonts-${Math.random().toString(36).slice(2, 8)}`;
-      fontInput.setAttribute("list", listId);
-      const dl = mk("datalist", "", fontRow);
-      dl.id = listId;
-      for (const f of ["Serif", "Sans-serif", "Monospace", ...h.fonts()]) {
+      const fontSel = mk("select", "fr-font-input", fontRow);
+      fontSel.title = "Font used in reading mode: a generic family or a font installed on this computer";
+      const addOpt = (parent: Element, value: string, label = value) => {
         const o = this.doc.createElementNS(XHTML, "option") as HTMLOptionElement;
-        o.value = f;
-        dl.append(o);
+        o.value = value;
+        o.textContent = label;
+        if (value && !/^(serif|sans-serif|monospace)$/i.test(value)) o.style.fontFamily = `"${value}"`;
+        parent.append(o);
+      };
+      addOpt(fontSel, "", "Default (serif)");
+      for (const [v, l] of [["serif", "Serif"], ["sans-serif", "Sans-serif"], ["monospace", "Monospace"]]) addOpt(fontSel, v!, l);
+      const installed = h.fonts();
+      if (installed.length) {
+        const g = this.doc.createElementNS(XHTML, "optgroup") as HTMLOptGroupElement;
+        g.label = "Installed fonts";
+        for (const f of installed) addOpt(g, f);
+        fontSel.append(g);
       }
-      fontInput.addEventListener("keydown", (e) => {
-        e.stopPropagation();
-        if (e.key === "Enter") fontInput.blur();
-      });
-      fontInput.addEventListener("change", () => h.setReadingFont(fontInput.value.replace(/["'\\;{}<>()\n]/g, "").trim().slice(0, 80)));
+      // a font chosen earlier that is no longer listed (uninstalled) still shows as the current choice
+      if (st.readingFont && ![...fontSel.options].some((o) => o.value.toLowerCase() === st.readingFont.toLowerCase())) addOpt(fontSel, st.readingFont);
+      const cur = [...fontSel.options].find((o) => o.value.toLowerCase() === st.readingFont.toLowerCase());
+      fontSel.value = cur ? cur.value : "";
+      fontSel.addEventListener("change", () => h.setReadingFont(fontSel.value));
       mk("hr", "fr-vp-hr", panel);
 
       const seg = <T extends string>(label: string, cur: T, opts: Array<{ v: T; icon: IconName; title: string }>, set: (v: T) => void) => {
