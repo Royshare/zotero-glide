@@ -72,6 +72,7 @@ export interface MenuItem {
 /** What the notes pane's list shows. */
 export interface ViewPanelState {
   reading: boolean;
+  readingFont: string;
   scroll: ScrollMode;
   spread: SpreadMode;
   split: SplitMode;
@@ -83,6 +84,9 @@ export interface ViewPanelState {
 export interface ViewPanelHandlers {
   state(): ViewPanelState;
   setReading(on: boolean): void;
+  /** Installed font names for the picker. */
+  fonts(): string[];
+  setReadingFont(name: string): void;
   setScroll(m: ScrollMode): void;
   setSpread(m: SpreadMode): void;
   setSplit(m: SplitMode): void;
@@ -402,6 +406,7 @@ li[data-open=true]>.fr-ol-row .fr-twisty svg{transform:rotate(90deg)}
 .fr-vp-row{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:34px}
 .fr-vp-label{font-size:14px}
 .fr-vp-head{margin:6px 0 8px}
+.fr-font-input{width:150px;height:24px;box-sizing:border-box;font:inherit;border:1px solid var(--fr-border);border-radius:5px;background:var(--fr-bg);color:inherit;padding:0 6px}
 .fr-vp-hr{border:none;border-top:1px solid var(--fr-border);margin:6px -12px}
 .fr-seg{display:flex;gap:1px;padding:2px;border-radius:8px;background:var(--fr-hover)}
 .fr-seg-btn{display:inline-flex;align-items:center;justify-content:center;width:44px;height:28px;border:none;border-radius:6px;background:none;color:inherit;opacity:.8;cursor:default}
@@ -435,7 +440,7 @@ li[data-open=true]>.fr-ol-row .fr-twisty svg{transform:rotate(90deg)}
 .fr-root[data-reading=true] .fr-reading{display:block}
 /* the reading view scrolls on its own: the hidden page stack must not show a second scrollbar (its scroll position is kept) */
 .fr-root[data-reading=true] .fr-scroller{overflow:hidden;scrollbar-gutter:auto}
-.fr-reading article{max-width:42em;margin:0 auto;padding:24px 20px 80px;font:var(--fr-reading-size,17px)/1.65 Georgia,serif}
+.fr-reading article{max-width:42em;margin:0 auto;padding:24px 20px 80px;font:var(--fr-reading-size,17px)/1.65 var(--fr-reading-font,Georgia,serif)}
 .fr-reading h6{margin:28px 0 8px;font:600 11px sans-serif;letter-spacing:.06em;text-transform:uppercase;opacity:.5}
 .fr-reading p{margin:0 0 1em}
 `;
@@ -1408,6 +1413,28 @@ export class ReaderView {
         h.setReading(!st.reading);
         this.hidePopups();
       });
+      // font: only fonts the user already has (nothing is bundled); free text works even if they can't be listed
+      const fontRow = mk("div", "fr-vp-row", panel);
+      mk("span", "fr-vp-label", fontRow, "Reading font");
+      const fontInput = mk("input", "fr-font-input", fontRow);
+      fontInput.type = "text";
+      fontInput.placeholder = "Default (serif)";
+      fontInput.value = st.readingFont;
+      fontInput.title = "Type or pick a font installed on this computer. Empty = default.";
+      const listId = `fr-fonts-${Math.random().toString(36).slice(2, 8)}`;
+      fontInput.setAttribute("list", listId);
+      const dl = mk("datalist", "", fontRow);
+      dl.id = listId;
+      for (const f of ["Serif", "Sans-serif", "Monospace", ...h.fonts()]) {
+        const o = this.doc.createElementNS(XHTML, "option") as HTMLOptionElement;
+        o.value = f;
+        dl.append(o);
+      }
+      fontInput.addEventListener("keydown", (e) => {
+        e.stopPropagation();
+        if (e.key === "Enter") fontInput.blur();
+      });
+      fontInput.addEventListener("change", () => h.setReadingFont(fontInput.value.replace(/["'\\;{}<>()\n]/g, "").trim().slice(0, 80)));
       mk("hr", "fr-vp-hr", panel);
 
       const seg = <T extends string>(label: string, cur: T, opts: Array<{ v: T; icon: IconName; title: string }>, set: (v: T) => void) => {
@@ -1921,6 +1948,13 @@ export class ReaderView {
   }
   get readingMode(): boolean {
     return this.root.dataset.reading === "true";
+  }
+  /** "" = default serif; "serif" / "sans-serif" / "monospace" are generic; anything else is an installed font's name. */
+  setReadingFont(name: string): void {
+    const n = name.trim();
+    const generic = /^(serif|sans-serif|monospace)$/i.test(n);
+    if (!n) this.root.style.removeProperty("--fr-reading-font");
+    else this.root.style.setProperty("--fr-reading-font", generic ? n.toLowerCase() : `"${n}", Georgia, serif`);
   }
   setReadingFontSize(px: number): void {
     this.root.style.setProperty("--fr-reading-size", `${px}px`);

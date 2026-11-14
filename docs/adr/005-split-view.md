@@ -24,3 +24,11 @@ position survives). Each pane therefore has its own helper process, scroll, zoom
 
 Not done: remembering the split across restarts; synchronized scrolling; picking a library paper other than
 the current selection; a notes pane in the second pane.
+
+## Reading-mode font
+The reading (reflow) view uses a font the user picks in the view-options panel ("Reading font"). No font files
+are bundled, so there is nothing to license: the choice is a generic family (Serif, Sans-serif, Monospace) or
+the name of a font already installed on the user's computer. The installed names come from Gecko's
+`nsIFontEnumerator` and feed a datalist; typing any name also works if listing fails. The name is validated
+(no quotes, semicolons, braces...) before it reaches a CSS value, and falls back to Georgia/serif if the font
+is missing. Stored as `readingFont` in the settings pref.

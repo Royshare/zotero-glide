@@ -10,7 +10,7 @@ test("parseSettings falls back field by field on junk, and clamps the reading si
   assert.deepEqual(parseSettings("{nope"), d);
   assert.deepEqual(parseSettings("[]"), d);
   const s = parseSettings(JSON.stringify({ theme: "dark", sidebarOpen: true, sidebarTab: "outline", readingFontSize: 99, color: "#aaaaaa" }));
-  assert.deepEqual(s, { theme: "dark", sidebarOpen: true, sidebarWidth: 236, sidebarTab: "outline", readingFontSize: 32, color: "#aaaaaa", notesOpen: false, notesWidth: 340, customThemes: [] });
+  assert.deepEqual(s, { theme: "dark", sidebarOpen: true, sidebarWidth: 236, sidebarTab: "outline", readingFontSize: 32, readingFont: "", color: "#aaaaaa", notesOpen: false, notesWidth: 340, customThemes: [] });
   const bad = parseSettings(JSON.stringify({ theme: "neon", sidebarOpen: "yes", sidebarTab: 3, readingFontSize: "big", color: "red" }));
   assert.deepEqual(bad, d);
   assert.equal(parseSettings(JSON.stringify({ readingFontSize: 2 })).readingFontSize, 12);
@@ -25,6 +25,13 @@ test("parseSettings keeps valid custom themes and falls back when the selected o
   assert.equal(s.theme, "custom:abc1");
   assert.equal(parseSettings(JSON.stringify({ theme: "custom:zzz", customThemes: [ct] })).theme, "auto");
   assert.equal(parseSettings(JSON.stringify({ theme: "snow" })).theme, "snow");
+});
+
+test("parseSettings accepts a font name but refuses one that could break out of a CSS value", () => {
+  assert.equal(parseSettings(JSON.stringify({ readingFont: "Palatino Linotype" })).readingFont, "Palatino Linotype");
+  assert.equal(parseSettings(JSON.stringify({ readingFont: 'x"; color:red' })).readingFont, "");
+  assert.equal(parseSettings(JSON.stringify({ readingFont: "a".repeat(200) })).readingFont, "");
+  assert.equal(parseSettings(JSON.stringify({ readingFont: 5 })).readingFont, "");
 });
 
 test("the settings store merges a patch into what is saved", () => {

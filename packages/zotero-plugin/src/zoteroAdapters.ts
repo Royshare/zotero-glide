@@ -42,6 +42,7 @@ export function parseSettings(raw: string | undefined): GlobalSettings {
     sidebarWidth: typeof v.sidebarWidth === "number" && Number.isFinite(v.sidebarWidth) ? Math.min(600, Math.max(180, v.sidebarWidth)) : d.sidebarWidth,
     sidebarTab: (TABS as readonly unknown[]).includes(v.sidebarTab) ? (v.sidebarTab as GlobalSettings["sidebarTab"]) : d.sidebarTab,
     readingFontSize: typeof v.readingFontSize === "number" && Number.isFinite(v.readingFontSize) ? Math.min(32, Math.max(12, v.readingFontSize)) : d.readingFontSize,
+    readingFont: typeof v.readingFont === "string" && v.readingFont.length <= 80 && !/["'\\;{}<>()\n]/.test(v.readingFont) ? v.readingFont.trim() : d.readingFont,
     color: typeof v.color === "string" && /^#[0-9a-f]{6}$/i.test(v.color) ? v.color : d.color,
     notesOpen: typeof v.notesOpen === "boolean" ? v.notesOpen : d.notesOpen,
     notesWidth: typeof v.notesWidth === "number" && Number.isFinite(v.notesWidth) ? Math.min(720, Math.max(260, v.notesWidth)) : d.notesWidth,

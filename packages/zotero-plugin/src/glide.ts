@@ -604,6 +604,16 @@ class GlidePlugin {
         await IOUtils.write(path, png);
       },
       openExternally: () => Zotero.launchFile(pdfPath),
+      listFonts: () => {
+        try {
+          const C = Components as unknown as { classes: Record<string, { getService(i: unknown): { EnumerateAllFonts(): string[] } }>; interfaces: Record<string, unknown> };
+          const names = C.classes["@mozilla.org/gfx/fontenumerator;1"]!.getService(C.interfaces.nsIFontEnumerator).EnumerateAllFonts();
+          return Array.from(new Set(names)).sort((a, b) => a.localeCompare(b));
+        } catch (e) {
+          Zotero.debug(`[glide] listing fonts failed: ${e}`);
+          return [];
+        }
+      },
       notify: (m) => this._notify(m),
     };
   }

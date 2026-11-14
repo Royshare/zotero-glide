@@ -172,6 +172,8 @@ export interface HostActions {
   copyCitation(): Promise<void>;
   chooseExportPath(defaultName: string): Promise<string | null>;
   openExternally(): void;
+  /** Names of the fonts installed on this computer (for the reading-mode font picker); may be empty. */
+  listFonts?(): string[];
   notify(message: string): void;
 }
 
@@ -181,13 +183,15 @@ export interface GlobalSettings {
   sidebarWidth: number;
   sidebarTab: SidebarTab;
   readingFontSize: number;
+  /** Reading-mode font family: a font installed on the user's computer, or a generic one; "" = the default serif. */
+  readingFont: string;
   color: string;
   notesOpen: boolean;
   notesWidth: number;
   customThemes: CustomTheme[];
 }
 
-export const DEFAULT_SETTINGS: GlobalSettings = { theme: "auto", sidebarOpen: false, sidebarWidth: 236, sidebarTab: "thumbnails", readingFontSize: 17, color: ANNOTATION_COLORS[0]!.hex, notesOpen: false, notesWidth: 340, customThemes: [] };
+export const DEFAULT_SETTINGS: GlobalSettings = { theme: "auto", sidebarOpen: false, sidebarWidth: 236, sidebarTab: "thumbnails", readingFontSize: 17, readingFont: "", color: ANNOTATION_COLORS[0]!.hex, notesOpen: false, notesWidth: 340, customThemes: [] };
 
 /** What the second pane of a split shows. */
 export type SplitTarget = { kind: "same" } | { kind: "tab"; pdfPath: string } | { kind: "selected" };
@@ -442,6 +446,7 @@ export class ReaderTab {
     this.view.setTheme(s.theme, s.customThemes);
     this.view.setColor(s.color);
     this.view.setReadingFontSize(s.readingFontSize);
+    this.view.setReadingFont(s.readingFont);
     this.view.setSidebarOpen(s.sidebarOpen);
     this.view.setSidebarWidth(s.sidebarWidth);
     this.view.setSidebarTab(s.sidebarTab);
@@ -775,12 +780,17 @@ export class ReaderTab {
     const h: ViewPanelHandlers = {
       state: () => {
         const s = this.d.settings.get();
-        return { reading: this.view.readingMode, scroll: this.arrange.scroll, spread: this.arrange.spread, split: this.splitMode, splitAvailable: !!this.d.split, theme: s.theme, customThemes: s.customThemes };
+        return { reading: this.view.readingMode, readingFont: s.readingFont, scroll: this.arrange.scroll, spread: this.arrange.spread, split: this.splitMode, splitAvailable: !!this.d.split, theme: s.theme, customThemes: s.customThemes };
       },
       setReading: (on) => this.setReadingMode(on),
       setScroll: (scroll) => this.setArrangement({ scroll }),
       setSpread: (spread) => this.setArrangement({ spread }),
       setSplit: (m) => void this.setSplit(m),
+      fonts: () => this.d.host.listFonts?.() ?? [],
+      setReadingFont: (name) => {
+        this.d.settings.set({ readingFont: name });
+        this.view.setReadingFont(name);
+      },
       setTheme: (t) => this.setTheme(t),
       addTheme: (bg, fg) => this.addCustomTheme(bg, fg),
       deleteTheme: (id) => this.deleteCustomTheme(id),
