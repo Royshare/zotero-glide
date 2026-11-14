@@ -58,6 +58,24 @@ export interface SidebarAnnotation {
   page: number;
 }
 
+/** One paper in the split pane's picker. */
+export interface PaperEntry {
+  label: string;
+  /** second line: authors, year, where it comes from */
+  sub?: string;
+  checked?: boolean;
+  run: () => void;
+}
+export interface PaperSection {
+  title: string;
+  entries: PaperEntry[];
+}
+/** What the paper picker of a split pane shows: suggestions when the box is empty, library hits when typing. */
+export interface PaperPickerHandlers {
+  suggestions(): Promise<PaperSection[]>;
+  search(query: string): Promise<PaperEntry[]>;
+}
+
 export interface MenuItem {
   label: string;
   icon?: IconName;
@@ -135,8 +153,9 @@ export interface ViewEvents {
   openMenu(anchor: HTMLElement): void;
   /** The toolbar's view-options button (reading mode, scrolling, spreads, split view, themes). */
   openViewPanel(anchor: HTMLElement): void;
-  /** Second pane of a split: the paper chip's menu, and its close button. */
-  paneMenu(anchor: HTMLElement): void;
+  /** Second pane of a split: the paper switcher in its header, swap and close. */
+  panePicker(anchor: HTMLElement): void;
+  paneSwap(): void;
   paneClose(): void;
   toggleCrop(): void;
   sidebarTab(tab: SidebarTab): void;
@@ -363,6 +382,27 @@ li[data-open=true]>.fr-ol-row .fr-twisty svg{transform:rotate(90deg)}
 .fr-cite:hover{background:var(--fr-hover)}
 .fr-cite-n{flex:none;min-width:1.6em;max-width:9em;font-weight:600;opacity:.65;text-align:end}
 .fr-ann img{display:block;max-width:100%;margin:4px 0;border-radius:3px}
+.fr-panehead{display:flex;align-items:center;gap:4px;flex:none;box-sizing:border-box;height:38px;padding:4px 6px;border-bottom:1px solid var(--fr-border);background:color-mix(in srgb,AccentColor 8%,var(--fr-bg))}
+.fr-switch-paper{flex:1 1 auto;min-width:0;display:flex;align-items:center;gap:7px;height:28px;padding:0 9px;border:1px solid color-mix(in srgb,AccentColor 50%,transparent);border-radius:7px;background:var(--fr-bg);color:inherit;font:inherit;font-size:13px;font-weight:600;text-align:start;cursor:pointer}
+.fr-switch-paper:hover{background:var(--fr-active)}
+/* the other pane's label: same size and place, but nothing to click */
+.fr-switch-paper[data-static=true]{cursor:default;border:none;border-radius:0;background:transparent}
+.fr-switch-paper[data-static=true]:hover{background:transparent}
+.fr-switch-paper .fr-chip-title{flex:1 1 auto}
+.fr-switch-hint{flex:none;font-size:11px;font-weight:500;opacity:.65}
+@container (max-width:420px){.fr-switch-hint{display:none}}
+.fr-picker{width:min(440px,calc(100cqw - 12px));box-sizing:border-box;display:flex;flex-direction:column;max-height:min(420px,60vh)}
+.fr-picker-in{margin:8px;height:30px;box-sizing:border-box;border:1px solid var(--fr-border);border-radius:6px;background:var(--fr-bg);color:inherit;font:inherit;padding:0 9px;flex:none}
+.fr-picker-in:focus{outline:2px solid color-mix(in srgb,AccentColor 60%,transparent);outline-offset:-1px}
+.fr-picker-list{overflow:auto;padding:0 5px 6px;min-height:0}
+.fr-picker-h{font-size:11px;font-weight:600;opacity:.6;padding:8px 8px 3px;text-transform:uppercase;letter-spacing:.03em}
+.fr-picker-row{display:flex;align-items:center;gap:8px;width:100%;box-sizing:border-box;padding:5px 8px;border:none;border-radius:6px;background:none;color:inherit;font:inherit;text-align:start;cursor:pointer}
+.fr-picker-row:hover,.fr-picker-row[data-active=true]{background:var(--fr-hover)}
+.fr-picker-row .fr-check{flex:none;width:16px}
+.fr-picker-txt{min-width:0;flex:1}
+.fr-picker-t,.fr-picker-s{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fr-picker-s{font-size:11px;opacity:.65}
+.fr-picker-empty{padding:10px 8px;font-size:12px;opacity:.65}
 .fr-chip{display:inline-flex;align-items:center;gap:5px;max-width:40%;flex:0 1 auto;min-width:78px;min-width:0;height:24px;padding:0 6px;border:1px solid var(--fr-border);border-radius:6px;font-size:12px;font-weight:600;cursor:default}
 .fr-chip:hover{background:var(--fr-hover)}
 .fr-chip-title{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -470,6 +510,7 @@ export class ReaderView {
   private readonly sideBar: HTMLElement;
   private brandEl!: HTMLElement;
   private barEl!: HTMLElement;
+  private paneHead: HTMLElement | null = null;
   private outlineSetters: Array<(open: boolean) => void> = [];
   private readonly sideTabs = new Map<SidebarTab, HTMLButtonElement>();
   private readonly notesPane: HTMLElement;
@@ -741,9 +782,7 @@ export class ReaderView {
     this.pagesEl.addEventListener("dblclick", pointer("dblclick"));
     this.pagesEl.addEventListener("contextmenu", pointer("contextmenu"));
     this.win.addEventListener("mouseup", pointer("up"));
-    this.root.addEventListener("mousedown", (e) => {
-      if (!(e.target as Element).closest?.(".fr-popup")) this.hidePopups();
-    });
+    this.root.addEventListener("mousedown", (e) => this.onRootPress(e.target as Element));
 
     const RO = (this.win as unknown as { ResizeObserver: typeof ResizeObserver }).ResizeObserver;
     this.resizeObserver = new RO(() => this.scheduleViewport());
@@ -767,29 +806,65 @@ export class ReaderView {
    */
   setSecondary(title: string): void {
     this.root.dataset.pane = "secondary";
-    this.brandEl.replaceChildren();
-    this.brandEl.className = "fr-chip";
-    this.brandEl.title = "Choose which paper this pane shows";
-    this.brandEl.append(createIcon(this.doc, "split-columns", 15));
+    this.brandEl.style.display = "none";
+    this.notesButton.hidden = true;
+    this.setPaneHeader(title, true);
+  }
+
+  /**
+   * The header row of a split pane, above its toolbar. Both panes get one of the same height so their toolbars line
+   * up: the second pane's is the button that changes its paper (plus swap and close); the main pane's only names its
+   * paper. `null` removes it (split closed).
+   */
+  setPaneHeader(title: string | null, interactive = false): void {
+    this.paneHead?.remove();
+    this.paneHead = null;
+    if (title === null) return;
+    // the whole paper title is the button, so it is obvious and easy to hit
+    const head = this.doc.createElementNS(XHTML, "div") as HTMLElement;
+    head.className = "fr-panehead";
+    const sw = this.doc.createElementNS(XHTML, interactive ? "button" : "div") as HTMLElement;
+    sw.className = "fr-switch-paper";
     const t = this.doc.createElementNS(XHTML, "span") as HTMLElement;
     t.className = "fr-chip-title";
     t.textContent = title;
-    this.brandEl.append(t, createIcon(this.doc, "chevron-down", 13));
-    this.brandEl.addEventListener("click", (e) => {
-      e.stopPropagation();
-      this.ev.paneMenu(this.brandEl);
-    });
-    this.notesButton.hidden = true;
-    const x = this.doc.createElementNS(XHTML, "button") as HTMLButtonElement;
-    x.className = "fr-btn";
-    x.title = "Close this pane";
-    x.setAttribute("aria-label", "Close this pane");
-    x.append(createIcon(this.doc, "x", 16));
-    x.addEventListener("click", (e) => {
-      e.stopPropagation();
-      this.ev.paneClose();
-    });
-    this.barEl.append(x);
+    sw.append(createIcon(this.doc, "book-open", 16), t);
+    if (interactive) {
+      sw.title = `${title}\nClick to show a different paper in this pane`;
+      sw.setAttribute("aria-haspopup", "dialog");
+      const hint = this.doc.createElementNS(XHTML, "span") as HTMLElement;
+      hint.className = "fr-switch-hint";
+      hint.textContent = "Change paper";
+      sw.append(hint, createIcon(this.doc, "chevron-down", 14));
+      sw.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this.ev.panePicker(sw);
+      });
+    } else {
+      sw.dataset.static = "true";
+      sw.title = title;
+    }
+    head.append(sw);
+    if (interactive) {
+      const iconBtn = (icon: IconName, label: string, run: () => void) => {
+        const b = this.doc.createElementNS(XHTML, "button") as HTMLButtonElement;
+        b.className = "fr-btn";
+        b.title = label;
+        b.setAttribute("aria-label", label);
+        b.append(createIcon(this.doc, icon, 16));
+        b.addEventListener("click", (e) => {
+          e.stopPropagation();
+          run();
+        });
+        return b;
+      };
+      head.append(
+        iconBtn("arrow-left-right", "Swap the two panes", () => this.ev.paneSwap()),
+        iconBtn("x", "Close this pane", () => this.ev.paneClose()),
+      );
+    }
+    this.root.insertBefore(head, this.barEl);
+    this.paneHead = head;
   }
 
   // -------------------------------------------------------------- basics
@@ -1237,7 +1312,32 @@ export class ReaderView {
     this.placePopup(clientX, clientY);
   }
 
+  /** The toolbar button the open popup hangs from (null for popups at a pointer position). */
+  private popupAnchor: HTMLElement | null = null;
+  /** Set when the mouse went down on `popupAnchor` while its popup was open; that button's click then only closes. */
+  private reopenGuard: HTMLElement | null = null;
+
+  /**
+   * The mouse went down somewhere in the reader: close the open popup (unless the press is inside it). Pressing the
+   * button that opened the popup must close it; closing here is not enough, because the click that follows would
+   * open it again, so remember which anchor was pressed and let that click do nothing.
+   */
+  private onRootPress(target: Element): void {
+    if (target.closest?.(".fr-popup")) return;
+    const a = this.popupAnchor;
+    this.reopenGuard = a && a.contains(target) ? a : null;
+    this.hidePopups();
+  }
+
+  /** True (once) when the click on `anchor` is the one that just closed its popup, so it must not reopen. */
+  private clickClosedPopup(anchor: HTMLElement): boolean {
+    const hit = this.reopenGuard === anchor;
+    this.reopenGuard = null;
+    return hit;
+  }
+
   hidePopups(): void {
+    this.popupAnchor = null;
     this.popupOver = false;
     this.popup.dataset.open = "false";
     this.popup.replaceChildren();
@@ -1324,7 +1424,9 @@ export class ReaderView {
   }
 
   showColorPopup(anchor: HTMLElement): void {
+    if (this.clickClosedPopup(anchor)) return;
     this.hidePopups();
+    this.popupAnchor = anchor;
     this.popup.append(this.colorRow(this.colorDot.style.background ? rgbToHex(this.colorDot.style.background) : "", (hex) => {
       this.ev.setColor(hex);
       this.hidePopups();
@@ -1335,7 +1437,9 @@ export class ReaderView {
 
   /** Compact toolbar: the annotation tools and the color, in one popup. */
   showToolsPopup(anchor: HTMLElement): void {
+    if (this.clickClosedPopup(anchor)) return;
     this.hidePopups();
+    this.popupAnchor = anchor;
     const row = this.doc.createElementNS(XHTML, "div") as HTMLElement;
     row.className = "fr-popup-row";
     const tools: Array<[Exclude<Tool, null>, IconName, string]> = [
@@ -1382,7 +1486,9 @@ export class ReaderView {
    * stays open and shows the new selection.
    */
   showViewPanel(anchor: HTMLElement, h: ViewPanelHandlers): void {
+    if (this.clickClosedPopup(anchor)) return;
     this.hidePopups();
+    this.popupAnchor = anchor;
     const panel = this.doc.createElementNS(XHTML, "div") as HTMLElement;
     panel.className = "fr-viewpanel";
     this.popup.append(panel);
@@ -1623,9 +1729,112 @@ export class ReaderView {
   }
 
   showMenu(anchor: HTMLElement, items: MenuItem[]): void {
+    if (this.clickClosedPopup(anchor)) return;
     this.renderMenu(items);
+    this.popupAnchor = anchor;
     const r = anchor.getBoundingClientRect();
     this.placePopup(r.right - 240, r.bottom);
+  }
+
+  /**
+   * The paper picker of a split pane: a search box over the library, with this paper, the papers open in other
+   * tabs and the paper selected in the Zotero library listed before anything is typed. Picking an entry runs it
+   * and closes the popup. Up/Down + Enter work from the search box.
+   */
+  showPaperPicker(anchor: HTMLElement, h: PaperPickerHandlers): void {
+    if (this.clickClosedPopup(anchor)) return;
+    this.hidePopups();
+    this.popupAnchor = anchor;
+    const mk = <K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, parent: Element, text?: string) => {
+      const e = this.doc.createElementNS(XHTML, tag) as HTMLElementTagNameMap[K];
+      e.className = cls;
+      if (text !== undefined) e.textContent = text;
+      parent.append(e);
+      return e;
+    };
+    const box = mk("div", "fr-picker", this.popup);
+    this.popup.classList.add("fr-popup-wide");
+    const input = mk("input", "fr-picker-in", box);
+    input.type = "text";
+    input.placeholder = "Search your library by title, author or year…";
+    input.setAttribute("aria-label", "Search your library for a paper to show in this pane");
+    const list = mk("div", "fr-picker-list", box);
+    let rows: HTMLElement[] = [];
+    let active = -1;
+    let token = 0;
+    const setActive = (i: number) => {
+      active = rows.length ? (i + rows.length) % rows.length : -1;
+      rows.forEach((r, k) => {
+        r.dataset.active = String(k === active);
+        if (k === active) r.scrollIntoView?.({ block: "nearest" });
+      });
+    };
+    const note = (text: string) => {
+      list.replaceChildren();
+      rows = [];
+      active = -1;
+      mk("div", "fr-picker-empty", list, text);
+    };
+    const paint = (sections: PaperSection[], emptyText: string) => {
+      list.replaceChildren();
+      rows = [];
+      let any = false;
+      for (const sec of sections) {
+        if (!sec.entries.length) continue;
+        any = true;
+        mk("div", "fr-picker-h", list, sec.title);
+        for (const en of sec.entries) {
+          const row = mk("button", "fr-picker-row", list);
+          const check = mk("span", "fr-check", row);
+          if (en.checked) check.append(createIcon(this.doc, "check", 14));
+          const txt = mk("span", "fr-picker-txt", row);
+          mk("span", "fr-picker-t", txt, en.label).title = en.label;
+          if (en.sub) mk("span", "fr-picker-s", txt, en.sub);
+          row.addEventListener("click", (e) => {
+            e.stopPropagation();
+            this.hidePopups();
+            en.run();
+          });
+          rows.push(row);
+        }
+      }
+      if (!any) mk("div", "fr-picker-empty", list, emptyText);
+      setActive(rows.length ? 0 : -1);
+    };
+    const load = async () => {
+      const mine = ++token;
+      const q = input.value.trim();
+      try {
+        if (!q) {
+          const sections = await h.suggestions();
+          if (mine === token) paint(sections, "No other papers are open. Type to search your library.");
+        } else {
+          note("Searching…");
+          const entries = await h.search(q);
+          if (mine === token) paint([{ title: "Your library", entries }], "No paper with a PDF matches.");
+        }
+      } catch {
+        if (mine === token) note("Could not search the library.");
+      }
+    };
+    let timer: number | null = null;
+    const win = this.win as unknown as { setTimeout(f: () => void, ms: number): number; clearTimeout(id: number): void };
+    input.addEventListener("input", () => {
+      if (timer !== null) win.clearTimeout(timer);
+      timer = win.setTimeout(() => void load(), 180);
+    });
+    input.addEventListener("keydown", (e) => {
+      e.stopPropagation(); // typing here must never reach the reader's shortcuts
+      if (e.key === "ArrowDown") (e.preventDefault(), setActive(active + 1));
+      else if (e.key === "ArrowUp") (e.preventDefault(), setActive(active - 1));
+      else if (e.key === "Enter") (e.preventDefault(), rows[active]?.click());
+      else if (e.key === "Escape") (e.preventDefault(), this.hidePopups(), this.focus());
+    });
+    note("Loading…");
+    const r = anchor.getBoundingClientRect();
+    this.placePopup(r.left, r.bottom - 2);
+    void load().then(() => this.placePopup(r.left, r.bottom - 2));
+    input.focus();
   }
 
   /**

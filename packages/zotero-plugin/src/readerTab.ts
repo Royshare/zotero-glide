@@ -43,7 +43,7 @@ interface CiteItem {
   go(): void;
 }
 import { SplitFrame } from "./splitView.ts";
-import { ReaderView, type CustomTheme, type SplitMode, type ViewPanelHandlers, type MenuItem, type OverlayItem, type PagePointer, type PageTheme, type SidebarTab, type Tool } from "./tabView.ts";
+import { ReaderView, type CustomTheme, type SplitMode, type ViewPanelHandlers, type MenuItem, type PaperEntry, type PaperPickerHandlers, type PaperSection, type OverlayItem, type PagePointer, type PageTheme, type SidebarTab, type Tool } from "./tabView.ts";
 
 /** Custom Zotero tab type. NO dash: Zotero splits tab types on "-" (`parseTabType`). */
 export const TAB_TYPE = "glide";
@@ -194,12 +194,23 @@ export interface GlobalSettings {
 export const DEFAULT_SETTINGS: GlobalSettings = { theme: "auto", sidebarOpen: false, sidebarWidth: 236, sidebarTab: "thumbnails", readingFontSize: 17, readingFont: "", color: ANNOTATION_COLORS[0]!.hex, notesOpen: false, notesWidth: 340, customThemes: [] };
 
 /** What the second pane of a split shows. */
-export type SplitTarget = { kind: "same" } | { kind: "tab"; pdfPath: string } | { kind: "selected" };
+export type SplitTarget = { kind: "same" } | { kind: "tab"; pdfPath: string } | { kind: "selected" } | { kind: "item"; itemID: number };
+
+/** A paper the split pane could show. */
+export interface PaperChoice {
+  label: string;
+  /** authors, year */
+  sub?: string;
+  target: SplitTarget;
+  /** set for papers already open in a Glide tab (marks the one the pane shows now) */
+  pdfPath?: string;
+}
 
 /** Hooks a second-pane reader gets from the reader that owns the split. */
 export interface SecondaryHooks {
-  /** The paper chip's menu: which paper to show, swap, close. */
-  menu(): MenuItem[];
+  /** The pane header's paper picker. */
+  picker: PaperPickerHandlers;
+  swap(): void;
   close(): void;
   /** The pane changed the page theme: the owner re-syncs its own view. */
   themeChanged(): void;
@@ -208,8 +219,12 @@ export interface SecondaryHooks {
 /** Opens readers inside a split pane (implemented by the plugin, which owns the helper processes). */
 export interface SplitHost {
   open(container: Element, target: SplitTarget, hooks: SecondaryHooks, page: number): Promise<{ tab: ReaderTab; pdfPath: string; title: string } | null>;
-  /** Papers the user may pick for the second pane (besides this one). */
-  choices(self: ReaderTab): Array<{ label: string; target: SplitTarget; pdfPath: string }>;
+  /** Papers open in other Glide tabs (besides `self`). */
+  choices(self: ReaderTab): PaperChoice[];
+  /** The paper (with a PDF) selected in the Zotero library, if any. */
+  selected(): Promise<PaperChoice | null>;
+  /** Library papers with a PDF whose title, authors or year match `query`. */
+  search(query: string): Promise<PaperChoice[]>;
 }
 
 /** A notes backend for panes that have no notes pane. */
@@ -411,7 +426,8 @@ export class ReaderTab {
         searchCleared: () => this.clearSearch(),
         openMenu: (anchor) => this.openMenu(anchor),
         openViewPanel: (anchor) => this.openViewPanel(anchor),
-        paneMenu: (anchor) => this.d.secondary && this.view.showMenu(anchor, this.d.secondary.menu()),
+        panePicker: (anchor) => this.d.secondary && this.view.showPaperPicker(anchor, this.d.secondary.picker),
+        paneSwap: () => this.d.secondary?.swap(),
         paneClose: () => this.d.secondary?.close(),
         toggleCrop: () => this.toggleCrop(),
         sidebarTab: (t) => this.setSidebarTab(t),
@@ -2192,6 +2208,7 @@ export class ReaderTab {
     }
     if (!this.frame) {
       this.frame = new SplitFrame(this.d.doc, this.container, () => this.relayoutSoon());
+      this.view.setPaneHeader(this.d.title);
     }
     this.splitMode = mode;
     this.frame.setMode(mode);
@@ -2204,7 +2221,8 @@ export class ReaderTab {
     const host = this.d.split;
     if (!frame || !host) return;
     const hooks: SecondaryHooks = {
-      menu: () => this.paneMenu(),
+      picker: this.paperPicker(),
+      swap: () => this.frame?.swap(),
       close: () => void this.setSplit("none"),
       themeChanged: () => this.syncTheme(),
     };
@@ -2221,22 +2239,25 @@ export class ReaderTab {
     this.relayoutSoon();
   }
 
-  /** Items of the second pane's paper chip. */
-  private paneMenu(): MenuItem[] {
-    const cur = this.secondary;
-    const items: MenuItem[] = [
-      { label: `This paper: ${this.d.title}`, icon: "file-text", checked: cur?.target.kind === "same", run: () => this.switchPane({ kind: "same" }) },
-    ];
-    for (const c of this.d.split?.choices(this) ?? []) {
-      items.push({ label: c.label, icon: "book-open", checked: cur?.target.kind === "tab" && cur.pdfPath === c.pdfPath, run: () => this.switchPane(c.target) });
-    }
-    items.push(
-      { label: "Paper selected in Zotero library", icon: "external-link", run: () => this.switchPane({ kind: "selected" }) },
-      { separator: true, label: "" },
-      { label: "Swap panes", icon: "arrow-left-right", run: () => this.frame?.swap() },
-      { label: "Close split view", icon: "x", run: () => void this.setSplit("none") }
-    );
-    return items;
+  /** What the second pane's paper picker lists and searches. */
+  private paperPicker(): PaperPickerHandlers {
+    const entry = (c: PaperChoice, checked = false): PaperEntry => ({ label: c.label, sub: c.sub, checked, run: () => this.switchPane(c.target) });
+    const shown = () => this.secondary?.target;
+    return {
+      suggestions: async () => {
+        const host = this.d.split;
+        const cur = shown();
+        const sections: PaperSection[] = [
+          { title: "This paper", entries: [{ label: this.d.title, sub: "Compare two places in the same paper", checked: cur?.kind === "same", run: () => this.switchPane({ kind: "same" }) }] },
+        ];
+        const open = host?.choices(this) ?? [];
+        if (open.length) sections.push({ title: "Open in other tabs", entries: open.map((c) => entry(c, cur?.kind === "tab" && cur.pdfPath === c.pdfPath)) });
+        const sel = await host?.selected();
+        if (sel) sections.push({ title: "Selected in your library", entries: [entry(sel)] });
+        return sections;
+      },
+      search: async (q) => ((await this.d.split?.search(q)) ?? []).map((c) => entry(c, shown()?.kind === "item" && c.target.kind === "item" && (shown() as { itemID: number }).itemID === c.target.itemID)),
+    };
   }
 
   private switchPane(target: SplitTarget): void {
@@ -2255,6 +2276,7 @@ export class ReaderTab {
     sec?.tab.closePane();
     this.frame?.dispose();
     this.frame = null;
+    this.view.setPaneHeader(null);
     this.relayoutSoon();
     this.view.focus();
   }
