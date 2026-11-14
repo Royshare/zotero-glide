@@ -382,9 +382,12 @@ li[data-open=true]>.fr-ol-row .fr-twisty svg{transform:rotate(90deg)}
 .fr-cite:hover{background:var(--fr-hover)}
 .fr-cite-n{flex:none;min-width:1.6em;max-width:9em;font-weight:600;opacity:.65;text-align:end}
 .fr-ann img{display:block;max-width:100%;margin:4px 0;border-radius:3px}
-.fr-panehead{display:flex;align-items:center;gap:4px;flex:none;padding:4px 6px;border-bottom:1px solid var(--fr-border);background:color-mix(in srgb,AccentColor 8%,var(--fr-bg))}
-.fr-switch-paper{flex:1 1 auto;min-width:0;display:flex;align-items:center;gap:7px;height:30px;padding:0 9px;border:1px solid color-mix(in srgb,AccentColor 50%,transparent);border-radius:7px;background:var(--fr-bg);color:inherit;font:inherit;font-size:13px;font-weight:600;text-align:start;cursor:pointer}
+.fr-panehead{display:flex;align-items:center;gap:4px;flex:none;box-sizing:border-box;height:38px;padding:4px 6px;border-bottom:1px solid var(--fr-border);background:color-mix(in srgb,AccentColor 8%,var(--fr-bg))}
+.fr-switch-paper{flex:1 1 auto;min-width:0;display:flex;align-items:center;gap:7px;height:28px;padding:0 9px;border:1px solid color-mix(in srgb,AccentColor 50%,transparent);border-radius:7px;background:var(--fr-bg);color:inherit;font:inherit;font-size:13px;font-weight:600;text-align:start;cursor:pointer}
 .fr-switch-paper:hover{background:var(--fr-active)}
+/* the other pane's label: same size and place, but nothing to click */
+.fr-switch-paper[data-static=true]{cursor:default;border-color:var(--fr-border);background:transparent}
+.fr-switch-paper[data-static=true]:hover{background:transparent}
 .fr-switch-paper .fr-chip-title{flex:1 1 auto}
 .fr-switch-hint{flex:none;font-size:11px;font-weight:500;opacity:.65}
 @container (max-width:420px){.fr-switch-hint{display:none}}
@@ -507,6 +510,7 @@ export class ReaderView {
   private readonly sideBar: HTMLElement;
   private brandEl!: HTMLElement;
   private barEl!: HTMLElement;
+  private paneHead: HTMLElement | null = null;
   private outlineSetters: Array<(open: boolean) => void> = [];
   private readonly sideTabs = new Map<SidebarTab, HTMLButtonElement>();
   private readonly notesPane: HTMLElement;
@@ -804,43 +808,63 @@ export class ReaderView {
     this.root.dataset.pane = "secondary";
     this.brandEl.style.display = "none";
     this.notesButton.hidden = true;
-    // A header row of its own, above the toolbar: the whole paper title is the button that changes the paper, so
-    // it is obvious and easy to hit (a chip squeezed into the toolbar was neither).
+    this.setPaneHeader(title, true);
+  }
+
+  /**
+   * The header row of a split pane, above its toolbar. Both panes get one of the same height so their toolbars line
+   * up: the second pane's is the button that changes its paper (plus swap and close); the main pane's only names its
+   * paper. `null` removes it (split closed).
+   */
+  setPaneHeader(title: string | null, interactive = false): void {
+    this.paneHead?.remove();
+    this.paneHead = null;
+    if (title === null) return;
+    // the whole paper title is the button, so it is obvious and easy to hit
     const head = this.doc.createElementNS(XHTML, "div") as HTMLElement;
     head.className = "fr-panehead";
-    const sw = this.doc.createElementNS(XHTML, "button") as HTMLButtonElement;
+    const sw = this.doc.createElementNS(XHTML, interactive ? "button" : "div") as HTMLElement;
     sw.className = "fr-switch-paper";
-    sw.title = `${title}\nClick to show a different paper in this pane`;
-    sw.setAttribute("aria-haspopup", "dialog");
     const t = this.doc.createElementNS(XHTML, "span") as HTMLElement;
     t.className = "fr-chip-title";
     t.textContent = title;
-    const hint = this.doc.createElementNS(XHTML, "span") as HTMLElement;
-    hint.className = "fr-switch-hint";
-    hint.textContent = "Change paper";
-    sw.append(createIcon(this.doc, "book-open", 16), t, hint, createIcon(this.doc, "chevron-down", 14));
-    sw.addEventListener("click", (e) => {
-      e.stopPropagation();
-      this.ev.panePicker(sw);
-    });
-    const iconBtn = (icon: IconName, label: string, run: () => void) => {
-      const b = this.doc.createElementNS(XHTML, "button") as HTMLButtonElement;
-      b.className = "fr-btn";
-      b.title = label;
-      b.setAttribute("aria-label", label);
-      b.append(createIcon(this.doc, icon, 16));
-      b.addEventListener("click", (e) => {
+    sw.append(createIcon(this.doc, "book-open", 16), t);
+    if (interactive) {
+      sw.title = `${title}\nClick to show a different paper in this pane`;
+      sw.setAttribute("aria-haspopup", "dialog");
+      const hint = this.doc.createElementNS(XHTML, "span") as HTMLElement;
+      hint.className = "fr-switch-hint";
+      hint.textContent = "Change paper";
+      sw.append(hint, createIcon(this.doc, "chevron-down", 14));
+      sw.addEventListener("click", (e) => {
         e.stopPropagation();
-        run();
+        this.ev.panePicker(sw);
       });
-      return b;
-    };
-    head.append(
-      sw,
-      iconBtn("arrow-left-right", "Swap the two panes", () => this.ev.paneSwap()),
-      iconBtn("x", "Close this pane", () => this.ev.paneClose()),
-    );
+    } else {
+      sw.dataset.static = "true";
+      sw.title = title;
+    }
+    head.append(sw);
+    if (interactive) {
+      const iconBtn = (icon: IconName, label: string, run: () => void) => {
+        const b = this.doc.createElementNS(XHTML, "button") as HTMLButtonElement;
+        b.className = "fr-btn";
+        b.title = label;
+        b.setAttribute("aria-label", label);
+        b.append(createIcon(this.doc, icon, 16));
+        b.addEventListener("click", (e) => {
+          e.stopPropagation();
+          run();
+        });
+        return b;
+      };
+      head.append(
+        iconBtn("arrow-left-right", "Swap the two panes", () => this.ev.paneSwap()),
+        iconBtn("x", "Close this pane", () => this.ev.paneClose()),
+      );
+    }
     this.root.insertBefore(head, this.barEl);
+    this.paneHead = head;
   }
 
   // -------------------------------------------------------------- basics

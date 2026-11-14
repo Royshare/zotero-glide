@@ -2194,6 +2194,7 @@ export class ReaderTab {
     }
     if (!this.frame) {
       this.frame = new SplitFrame(this.d.doc, this.container, () => this.relayoutSoon());
+      this.view.setPaneHeader(this.d.title);
     }
     this.splitMode = mode;
     this.frame.setMode(mode);
@@ -2261,6 +2262,7 @@ export class ReaderTab {
     sec?.tab.closePane();
     this.frame?.dispose();
     this.frame = null;
+    this.view.setPaneHeader(null);
     this.relayoutSoon();
     this.view.focus();
   }
