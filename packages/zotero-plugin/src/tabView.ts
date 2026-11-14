@@ -386,7 +386,7 @@ li[data-open=true]>.fr-ol-row .fr-twisty svg{transform:rotate(90deg)}
 .fr-switch-paper{flex:1 1 auto;min-width:0;display:flex;align-items:center;gap:7px;height:28px;padding:0 9px;border:1px solid color-mix(in srgb,AccentColor 50%,transparent);border-radius:7px;background:var(--fr-bg);color:inherit;font:inherit;font-size:13px;font-weight:600;text-align:start;cursor:pointer}
 .fr-switch-paper:hover{background:var(--fr-active)}
 /* the other pane's label: same size and place, but nothing to click */
-.fr-switch-paper[data-static=true]{cursor:default;border-color:var(--fr-border);background:transparent}
+.fr-switch-paper[data-static=true]{cursor:default;border:none;border-radius:0;background:transparent}
 .fr-switch-paper[data-static=true]:hover{background:transparent}
 .fr-switch-paper .fr-chip-title{flex:1 1 auto}
 .fr-switch-hint{flex:none;font-size:11px;font-weight:500;opacity:.65}
