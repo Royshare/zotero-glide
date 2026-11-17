@@ -7,7 +7,6 @@ import assert from "node:assert/strict";
 import {
   isPdfAttachmentItem,
   resolvePdfAttachment,
-  getPdfPathForItem,
   type PdfLikeItem,
 } from "../src/pdfAttachment.ts";
 
@@ -96,29 +95,6 @@ test("resolvePdfAttachment: null when the best attachment is not a PDF (e.g. a w
 
 test("resolvePdfAttachment: null for null item (menu shown with nothing selected)", async () => {
   assert.equal(await resolvePdfAttachment(null), null);
-});
-
-test("getPdfPathForItem: resolves the attachment's file path for a regular item", async () => {
-  const path = await getPdfPathForItem(regularItemWithPdf("/x/y.pdf"));
-  assert.equal(path, "/x/y.pdf");
-});
-
-test("getPdfPathForItem: resolves directly when given the PDF attachment itself", async () => {
-  const path = await getPdfPathForItem(pdfAttachment("/x/y.pdf"));
-  assert.equal(path, "/x/y.pdf");
-});
-
-test("getPdfPathForItem: null when the attachment file is missing on disk", async () => {
-  const attachment: PdfLikeItem = {
-    isPDFAttachment: () => true,
-    isRegularItem: () => false,
-    getFilePathAsync: async () => false, // Zotero's real API returns `false` for a missing file
-  };
-  assert.equal(await getPdfPathForItem(attachment), null);
-});
-
-test("getPdfPathForItem: null when there is no PDF attachment to resolve", async () => {
-  assert.equal(await getPdfPathForItem(regularItemWithoutAttachment()), null);
 });
 
 import { tabTitleForItem } from "../src/pdfAttachment.ts";

@@ -67,21 +67,6 @@ export async function resolvePdfAttachment(
 }
 
 /**
- * Resolves the on-disk path for the PDF attachment relevant to `item`
- * (regular item or attachment), or `null` if there is none / the file is
- * missing on disk. Uses `getFilePathAsync()` specifically, not the
- * cache-only sync `getFilePath()` (see glide.ts's research citation).
- */
-export async function getPdfPathForItem(item: PdfLikeItem | null | undefined): Promise<string | null> {
-  const attachment = await resolvePdfAttachment(item);
-  if (!attachment || typeof attachment.getFilePathAsync !== "function") {
-    return null;
-  }
-  const path = await attachment.getFilePathAsync();
-  return path || null;
-}
-
-/**
  * A human title for a reader tab: the parent item's title (what Zotero's
  * own reader tabs show), else the attachment's, else its file name, else
  * the PDF path's basename.

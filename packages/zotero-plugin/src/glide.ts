@@ -37,8 +37,7 @@ import {
 import { resolveHelperPath } from "./resolveHelper.ts";
 import { resolveHelperPathPacked } from "./extractHelper.ts";
 import { resolvePdfAttachment, tabTitleForItem, type PdfLikeItem } from "./pdfAttachment.ts";
-import { launchGlide } from "./launchGlide.ts";
-import { buildServeArgs, helperEnvironment, type DockGeometry } from "./buildArgs.ts";
+import { buildServeArgs, helperEnvironment } from "./buildArgs.ts";
 import type { HelperProcess } from "./helperConnection.ts";
 import { NO_NOTES, ReaderTab, TAB_TYPE, type GlobalSettings, type HostActions, type PaperChoice, type ReaderTabDeps, type SplitHost, type ZoteroTabs } from "./readerTab.ts";
 import { PositionStore } from "./positionStore.ts";
@@ -83,7 +82,6 @@ interface PickerItem extends PdfLikeItem {
 }
 
 const MENU_ID = "glide-open";
-const MENU_ID_WINDOW = "glide-open-window";
 const OBSERVER_ID = "glide-tabs";
 
 class GlidePlugin {
@@ -91,7 +89,6 @@ class GlidePlugin {
   version: string | null = null;
   rootURI: string | null = null;
   menuID: string | false | null = null;
-  windowMenuID: string | false | null = null;
   private subprocessModule: SubprocessModule | null = null;
   private readerTabs = new Set<ReaderTab>();
   private originalGetState: (() => SessionTab[]) | null = null;
@@ -178,19 +175,14 @@ class GlidePlugin {
         await open(item as PdfLikeItem);
       },
     });
-    // Primary: a tab in Zotero's own tab bar. Secondary: the original
-    // standalone window (kept: it has the lowest possible coupling to Zotero).
+    // One entry: the reader is always a tab in Zotero's own tab bar. (There used to be a second,
+    // "separate window" entry that launched the helper's own native window; it is gone -- see
+    // docs/adr/006-reader-window-host.md for the plan for a real Zotero-hosted window.)
     this.menuID = Zotero.MenuManager.registerMenu({
       menuID: MENU_ID,
       pluginID: this.id!,
       target: "main/library/item",
       menus: [entry("Open in Zotero Glide", (i) => this.openInTab(i))],
-    });
-    this.windowMenuID = Zotero.MenuManager.registerMenu({
-      menuID: MENU_ID_WINDOW,
-      pluginID: this.id!,
-      target: "main/library/item",
-      menus: [entry("Open in Zotero Glide (separate window)", (i) => this.openInGlide(i))],
     });
   }
 
@@ -198,11 +190,7 @@ class GlidePlugin {
     if (this.menuID && Zotero.MenuManager && typeof Zotero.MenuManager.unregisterMenu === "function") {
       Zotero.MenuManager.unregisterMenu(this.menuID);
     }
-    if (this.windowMenuID && Zotero.MenuManager && typeof Zotero.MenuManager.unregisterMenu === "function") {
-      Zotero.MenuManager.unregisterMenu(this.windowMenuID);
-    }
     this.menuID = null;
-    this.windowMenuID = null;
   }
 
   private _hostPlatform(): string {
@@ -223,41 +211,6 @@ class GlidePlugin {
     } catch {
       return false;
     }
-  }
-
-  private async _spawn(command: string, args: string[]): Promise<SubprocessHandle> {
-    if (!this.subprocessModule) {
-      const mod: { Subprocess: SubprocessModule } = {} as { Subprocess: SubprocessModule };
-      ChromeUtils.defineESModuleGetters(mod, {
-        Subprocess: "resource://gre/modules/Subprocess.sys.mjs",
-      });
-      this.subprocessModule = mod.Subprocess;
-    }
-    let proc: SubprocessHandle;
-    try {
-      proc = await this.subprocessModule.call({ command, arguments: args });
-    } catch (cause) {
-      throw new SpawnError(command, cause);
-    }
-    // Best-effort "did it crash immediately" check (brief §12): race the
-    // process's exit against a short grace period. If it's already exited
-    // with a non-zero code before the reader would plausibly have shown a
-    // window, treat that as a launch failure rather than silently
-    // succeeding. If the timeout wins, the process is presumed running.
-    const immediateExit = await Promise.race([
-      proc.wait().then((result) => ({ exited: true as const, result })),
-      new Promise<{ exited: false }>((resolve) => setTimeout(() => resolve({ exited: false }), 600)),
-    ]);
-    if (immediateExit.exited && immediateExit.result.exitCode !== 0) {
-      throw new ReaderCrashedError(immediateExit.result.exitCode);
-    }
-    if (!immediateExit.exited) {
-      // Still running past the grace period -- log (not surface) any later exit.
-      proc.wait().then((result) => {
-        Zotero.debug(`[glide] helper exited with code ${result.exitCode}`);
-      });
-    }
-    return proc;
   }
 
   /**
@@ -301,18 +254,6 @@ class GlidePlugin {
           });
 
     return resolveHelper();
-  }
-
-  async openInGlide(item: PdfLikeItem): Promise<void> {
-    try {
-      await launchGlide(item, {
-        resolveHelperPath: () => this._resolveHelper(),
-        spawn: (command: string, args: string[]) => this._spawn(command, args),
-        dock: this._dockGeometry(),
-      });
-    } catch (error) {
-      this._showLaunchError(error);
-    }
   }
 
   /**
@@ -766,33 +707,9 @@ class GlidePlugin {
     this.readerTabs.clear();
   }
 
-  /**
-   * v0.2 "docked" placement (see docs/adr and STATUS.md: a real, still
-   * fully isolated process, just positioned to *look* integrated rather
-   * than a literal embedded tab). Targets the space immediately to the
-   * right of Zotero's own window, matching its height. Best-effort --
-   * returns undefined (falling back to reader-helper's normal centered
-   * default) rather than throwing if Zotero's window geometry isn't
-   * available for any reason; this is a cosmetic feature, not something
-   * that should ever block opening the reader.
-   */
-  private _dockGeometry(): DockGeometry | undefined {
-    try {
-      const win = Zotero.getMainWindow();
-      if (!win) return undefined;
-      return {
-        x: win.screenX + win.outerWidth,
-        y: win.screenY,
-        height: win.outerHeight,
-      };
-    } catch {
-      return undefined;
-    }
-  }
-
   private _rootDirFromURI(): string {
     // Only valid for an unpacked (plain file://) install -- see the
-    // isPacked branch in openInGlide above.
+    // isPacked branch in _resolveHelper above.
     //
     // Zotero.File.pathToFile() takes a filesystem *path*; on Zotero 11 it
     // throws "Unexpected path value 'file:///...'" when handed the
