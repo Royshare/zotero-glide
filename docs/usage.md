@@ -7,6 +7,15 @@
 `Shift+Enter` previous); `Ctrl/Cmd+G` go to page; `Ctrl/Cmd+C` copy selection; `Ctrl/Cmd+A` select all
 text; `Esc` clears the selection / tool / reading mode.
 
+## Side by side, second screen
+
+- **Two places or two papers at once:** View options → **Split View** (side by side or top/bottom; see
+  [ADR 005](adr/005-split-view.md)). The second pane can show any paper with a PDF.
+- **A different app or the second monitor:** **⋯ → Open in Zotero's own reader** (a tab Zotero can move into its own
+  window) or **⋯ → Open in system viewer**.
+- There is no separate native window any more; a Zotero window that hosts this reader is proposed in
+  [ADR 006](adr/006-reader-window-host.md).
+
 ## What it is not
 
 - Not a replacement for Zotero's built-in reader, and not a fork or monkey-patch of it. The plugin never

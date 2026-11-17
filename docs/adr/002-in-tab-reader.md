@@ -119,7 +119,7 @@ Zotero main window
   actually acts on are stopped, so Cmd/Ctrl+W etc. still reach Zotero.
 
 ## Consequences
-- The window-based reader remains, as "Open in Zotero Glide (separate window)".
+- The window-based reader was kept at first as "Open in Zotero Glide (separate window)"; it has since been removed (it lacked every reader feature and doubled the maintenance surface). See [ADR 006](006-reader-window-host.md).
 - No annotations, no text selection/copy, no position persistence yet (same
   non-goals as v0.1/v0.2). Position persistence is now cheap to add (the
   helper reports `page` on every frame); selection needs text geometry from

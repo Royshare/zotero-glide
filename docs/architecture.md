@@ -9,31 +9,27 @@ Zotero (unmodified)
       └───────────── fast-reader-helper --serve (headless, one per tab) ─────────┘
 ```
 
-Separate-window mode (the original design):
+The helper (one headless process per reader tab):
 
 ```
-Zotero (unmodified)
-     │
-     │  right-click a PDF attachment -> "Open in Zotero Glide (separate window)"
-     ▼
-packages/zotero-plugin/addon/       (thin: menu + process spawn only)
-     │  Subprocess.call({ command, arguments: [pdfPath] })
-     │  argv array, never a shell string (brief §7)
-     ▼
-packages/reader-helper/            (standalone native process, per PDF)
-     │
-     ├── src/app.rs        window, input, blit-to-surface (winit + softbuffer)
-     ├── src/session.rs    navigation/zoom/search + render/cache/prefetch/evict
-     ├── src/cache.rs      bounded render cache (current page ± 1)
+packages/reader-helper/
+     ├── src/main.rs       argv + stdio loop (--serve only; there is no window mode)
+     ├── src/serve.rs      JSON command protocol, renders the current page to a frame file
      ├── src/engine.rs     DocumentEngine trait + MuPdfDocumentEngine
      └── (MuPDF, statically linked, behind the engine module only)
+     (src/session.rs + src/cache.rs: page-cache policy, kept for the benchmark harness only)
 ```
 
-Closing the Zotero Glide tab (or window) ends that one process; Zotero is
+The original design -- a native `winit` window per PDF, launched from a second
+"separate window" menu entry -- was removed in favour of the tab (see
+[ADR 002](adr/002-in-tab-reader.md)); a Zotero-hosted window is proposed in
+[ADR 006](adr/006-reader-window-host.md).
+
+Closing the Zotero Glide tab ends that one process; Zotero is
 unaffected and never blocks on it. Reopening the same PDF starts a
 brand-new process with a clean cache -- there's no persistent
 in-plugin state to go stale. Full rationale for the specific
-Rust/winit/softbuffer/MuPDF stack, and what was ruled out (Electron, Qt,
+Rust/MuPDF stack, and what was ruled out (Electron, Qt,
 a bundled browser engine), is in
 [`docs/adr/001-reader-helper-stack.md`](adr/001-reader-helper-stack.md).
 
