@@ -2,7 +2,6 @@
 // Copyright (C) 2026 Zotero Glide contributors
 
 pub mod about;
-pub mod app;
 pub mod cache;
 pub mod engine;
 pub mod frame;

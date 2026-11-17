@@ -3,11 +3,9 @@ name = "glide-helper"
 version = "0.1.0"
 edition = "2024"
 license = "AGPL-3.0-or-later"
-description = "Headless/windowed MuPDF PDF reader process used by the Zotero Glide plugin"
+description = "Headless MuPDF render server used by the Zotero Glide plugin"
 publish = false
 
 [dependencies]
 mupdf = { version = "0.8.0", default-features = false, features = ["base14-fonts"] }
 serde_json = "1.0.154"
-softbuffer = "0.4.8"
-winit = "0.30.13"

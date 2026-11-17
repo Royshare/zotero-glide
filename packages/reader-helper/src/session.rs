@@ -2,10 +2,10 @@
 // Copyright (C) 2026 Zotero Glide contributors
 
 //! The reader's actual behavior -- navigation, zoom, search, and the
-//! render/cache/prefetch/evict cycle -- with no windowing dependency. `App`
-//! (winit) and the benchmark harness (`src/bin/bench_navigate.rs`) both
-//! drive this same code, so a benchmark run exercises the exact cache
-//! policy the live GUI uses, not a re-implementation of it.
+//! render/cache/prefetch/evict cycle -- with no windowing dependency. Used only by the
+//! page-cache benchmark harness (`src/bin/bench_navigate.rs`); the shipped reader is the
+//! headless `serve.rs`, which keeps its own state. (The windowed app that once drove this
+//! was removed.)
 
 use crate::cache::RenderCache;
 use crate::engine::{DocumentEngine, PageSize, RenderedPage, SearchHit};
