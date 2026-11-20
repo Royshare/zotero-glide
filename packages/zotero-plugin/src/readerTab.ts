@@ -523,6 +523,9 @@ export class ReaderTab {
       this.view.focus();
       this.view.sendViewport();
       this.requestVisible();
+      // The background trim blanked the thumbnails (and a thumbnail reply that arrives while the tab is hidden is
+      // dropped), so redraw the visible ones; nothing else would, until the sidebar was scrolled.
+      this.requestThumbnails();
     } else {
       this.trimTimer = this.d.setTimeout(() => {
         this.trimTimer = null;
