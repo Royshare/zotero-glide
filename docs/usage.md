@@ -11,10 +11,11 @@ text; `Esc` clears the selection / tool / reading mode.
 
 - **Two places or two papers at once:** View options → **Split View** (side by side or top/bottom; see
   [ADR 005](adr/005-split-view.md)). The second pane can show any paper with a PDF.
-- **A different app or the second monitor:** **⋯ → Open in Zotero's own reader** (a tab Zotero can move into its own
-  window) or **⋯ → Open in system viewer**.
-- There is no separate native window any more; a Zotero window that hosts this reader is proposed in
-  [ADR 006](adr/006-reader-window-host.md).
+- **The second monitor:** right-click the Glide tab → **Open in New Window**. The paper moves into its own window with
+  the same reader (split view is not available there yet). If the window cannot be created, Zotero's own reader
+  window opens instead. See [ADR 006](adr/006-reader-window-host.md).
+- **A different app:** **⋯ → Open in Zotero's own reader** or **⋯ → Open in system viewer**.
+- There is no separate native window any more (the v0.1 `winit` one was removed).
 
 ## What it is not
 

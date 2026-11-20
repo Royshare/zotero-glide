@@ -67,6 +67,14 @@ interface TabsWindow {
   document: Document;
 }
 
+/** A Zotero viewer window with a blank page for a reader, and what a ReaderTab needs in place of `Zotero_Tabs`. */
+interface WindowHost {
+  chromeWin: Window;
+  /** The page's window: its document is where the reader is built. */
+  win: TabsWindow;
+  tabs: ZoteroTabs;
+}
+
 /** The bits of a Zotero attachment item this plugin touches directly. */
 interface ZItem {
   id: number;
@@ -93,6 +101,8 @@ class GlidePlugin {
   private tabMenuID: string | false | null = null;
   private subprocessModule: SubprocessModule | null = null;
   private readerTabs = new Set<ReaderTab>();
+  /** Readers hosted in their own window; they are not Zotero tabs, so tab selection never backgrounds them. */
+  private windowTabs = new Set<ReaderTab>();
   private originalGetState: (() => SessionTab[]) | null = null;
   private _originalReaderOpen: ((...a: unknown[]) => Promise<unknown>) | null = null;
   private _bypassReaderPatch = false;
@@ -203,11 +213,12 @@ class GlidePlugin {
           onCommand: async (_event: Event, context: { tabID?: string }) => {
             const tab = [...this.readerTabs].find((t) => t.tabID === context.tabID);
             const attachment = tab && this._papers.get(tab)?.attachment;
-            if (!attachment) return;
-            // Zotero's reader can open an attachment in a separate main window. The Glide opener
-            // patch explicitly leaves openInWindow requests to Zotero's built-in reader. allowDuplicate is
-            // required: our tab carries the same itemID, so without it Zotero finds that tab, just selects it
-            // and returns (the "does nothing" symptom).
+            if (!tab || !attachment) return;
+            // Move the paper to its own Glide window (the tab closes once it is up).
+            const item = Zotero.Items.get(attachment.id) as unknown as PdfLikeItem;
+            if (await this.openInWindow(item, {}, tab)) return;
+            // The window could not be created: use Zotero's own reader window instead. allowDuplicate is required:
+            // our tab carries the same itemID, so without it Zotero finds that tab, selects it and returns.
             await Zotero.Reader.open(attachment.id, undefined, { openInWindow: true, allowDuplicate: true });
           },
         },
@@ -295,8 +306,22 @@ class GlidePlugin {
    * Re-opening a PDF that already has a reader tab just selects that tab.
    */
   async openInTab(item: PdfLikeItem, loc: { pageIndex?: number; annotationKey?: string } = {}): Promise<void> {
+    await this._open(item, loc, "tab");
+  }
+
+  /**
+   * Opens the PDF in its own Glide window (the full reader, hosted in a Zotero viewer window instead of a tab).
+   * `replace` is a Glide tab being moved: it is closed once the window is up. Resolves false only when the window
+   * could not be created, so the caller can fall back to Zotero's own reader window.
+   */
+  async openInWindow(item: PdfLikeItem, loc: { pageIndex?: number; annotationKey?: string } = {}, replace?: ReaderTab): Promise<boolean> {
+    return this._open(item, loc, "window", replace);
+  }
+
+  private async _open(item: PdfLikeItem, loc: { pageIndex?: number; annotationKey?: string }, target: "tab" | "window", replace?: ReaderTab): Promise<boolean> {
     let proc: SubprocessHandle | null = null;
     let frameDir: string | null = null;
+    let host: WindowHost | null = null;
     try {
       const win = Zotero.getMainWindow() as unknown as TabsWindow | null;
       const tabs = win?.Zotero_Tabs;
@@ -313,32 +338,52 @@ class GlidePlugin {
         // yet). Zotero's own flow knows what to do -- download it, or offer to locate it -- so use that instead of a
         // dead-end error; once the file exists it opens here (see _openNextInGlide).
         await this._viewMissingAttachment((attachment as unknown as ZItem).id);
-        return;
+        return true;
       }
 
-      for (const open of this.readerTabs) {
-        if (open.pdfPath === pdfPath) {
+      for (const open of [...this.readerTabs, ...this.windowTabs]) {
+        if (open !== replace && open.pdfPath === pdfPath) {
           open.reveal(loc);
-          return;
+          return true;
+        }
+      }
+
+      const title = tabTitleForItem(attachment, pdfPath);
+      if (target === "window") {
+        try {
+          host = await this._createWindowHost(title);
+        } catch (e) {
+          Zotero.debug(`[glide] could not open a reader window: ${e}`);
+          return false;
         }
       }
 
       const spawned = await this._spawnServe(pdfPath);
       proc = spawned.proc;
       frameDir = spawned.frameDir;
+      // the new reader reads the saved position when it starts, so the one being replaced must have written it
+      replace?.flushPosition();
 
       const tab = new ReaderTab({
-        ...this._readerDeps(win, tabs, attachment as unknown as ZItem, pdfPath, spawned.proc, spawned.frameDir),
-        title: tabTitleForItem(attachment, pdfPath),
+        ...this._readerDeps(host?.win ?? win, host?.tabs ?? tabs, attachment as unknown as ZItem, pdfPath, spawned.proc, spawned.frameDir),
+        title,
         initial: loc,
-        split: this._splitHost(win),
+        // split view flexes a tab's container; a window has no second pane for now
+        split: host ? undefined : this._splitHost(win),
         onClosed: (closed) => {
           this.readerTabs.delete(closed);
+          this.windowTabs.delete(closed);
           this._papers.delete(closed);
         },
       });
-      this.readerTabs.add(tab);
-      this._papers.set(tab, { attachment: attachment as unknown as ZItem, title: tabTitleForItem(attachment, pdfPath) });
+      if (host) {
+        this.windowTabs.add(tab);
+      } else {
+        this.readerTabs.add(tab);
+        this._papers.set(tab, { attachment: attachment as unknown as ZItem, title });
+      }
+      if (replace) replace.close();
+      return true;
     } catch (error) {
       if (proc) {
         try {
@@ -350,7 +395,91 @@ class GlidePlugin {
       if (frameDir) {
         IOUtils.remove(frameDir, { recursive: true, ignoreAbsent: true }).catch(() => {});
       }
+      try {
+        host?.chromeWin.close();
+      } catch {
+        /* already gone */
+      }
       this._showLaunchError(error);
+      return true;
+    }
+  }
+
+  /**
+   * A Zotero viewer window (the one `Zotero.openInViewer` uses: Zotero's theme, an Edit/Window menu, Cmd/Ctrl+W)
+   * with a blank page the reader is built into, plus the tab-API stand-in a ReaderTab needs. Throws if it does
+   * not come up, and the caller then falls back to Zotero's own reader window.
+   */
+  private async _createWindowHost(title: string): Promise<WindowHost> {
+    // Not Zotero.openInViewer: it refuses a second window for a URI it already shows, and one blank page per
+    // reader is exactly what is wanted here. The argument shape is basicViewer.js's own.
+    const arg: { uri: string; options: Record<string, unknown>; wrappedJSObject?: unknown } = { uri: "about:blank", options: {} };
+    arg.wrappedJSObject = arg;
+    const chromeWin = Services.ww.openWindow(
+      null as never,
+      "chrome://zotero/content/standalone/basicViewer.xhtml",
+      null as never,
+      "chrome,dialog=yes,resizable,centerscreen,menubar,scrollbars",
+      arg as never
+    ) as unknown as Window;
+    try {
+      const doc = await new Promise<Document>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error("the reader window did not load")), 8000);
+        chromeWin.addEventListener(
+          "load",
+          () => {
+            // basicViewer.js creates and loads its <browser> in a load handler of its own, so wait a tick
+            setTimeout(() => {
+              const browser = chromeWin.document.documentElement.getElementsByTagName("browser")[0] as unknown as
+                | { contentDocument: Document | null; addEventListener(t: string, f: () => void): void; removeEventListener(t: string, f: () => void): void }
+                | undefined;
+              if (!browser) {
+                clearTimeout(timer);
+                return reject(new Error("the reader window has no browser"));
+              }
+              const ready = () => {
+                const d = browser.contentDocument;
+                if (!d?.body) return;
+                browser.removeEventListener("pageshow", ready);
+                clearTimeout(timer);
+                resolve(d);
+              };
+              browser.addEventListener("pageshow", ready);
+              ready();
+            });
+          },
+          { once: true }
+        );
+      });
+      const setTitle = (t: string) => {
+        doc.title = t;
+        chromeWin.document.title = t;
+      };
+      setTitle(title);
+      doc.documentElement.style.cssText = "color-scheme:light dark;background:Canvas;height:100%";
+      doc.body.style.cssText = "margin:0;height:100%;overflow:hidden";
+      const root = doc.createElementNS("http://www.w3.org/1999/xhtml", "div") as HTMLElement;
+      root.style.cssText = "position:fixed;inset:0;display:flex;flex-direction:column";
+      doc.body.append(root);
+      const tabs: ZoteroTabs = {
+        add: ({ title: t, onClose }) => {
+          if (t) setTitle(t);
+          chromeWin.addEventListener("unload", () => onClose?.(), { once: true });
+          return { id: `glide-window-${Zotero.Utilities.randomString(6)}`, container: root };
+        },
+        select: () => chromeWin.focus(),
+        close: () => chromeWin.close(),
+        rename: (_id, t) => setTitle(t),
+        tabHooks: { restoreState: {} },
+      };
+      return { chromeWin, win: doc.defaultView as unknown as TabsWindow, tabs };
+    } catch (e) {
+      try {
+        chromeWin.close();
+      } catch {
+        /* already gone */
+      }
+      throw e;
     }
   }
 
@@ -750,6 +879,8 @@ class GlidePlugin {
     }
     for (const tab of Array.from(this.readerTabs)) tab.close();
     this.readerTabs.clear();
+    for (const tab of Array.from(this.windowTabs)) tab.close();
+    this.windowTabs.clear();
   }
 
   private _rootDirFromURI(): string {

@@ -2395,6 +2395,11 @@ export class ReaderTab {
     }, 1200);
   }
 
+  /** Writes the reading position now, so a reader opened next for the same paper (e.g. in a new window) resumes here. */
+  flushPosition(): void {
+    this.savePositionNow();
+  }
+
   private savePositionNow(): void {
     if (!this.started || !this.pages.length) return;
     try {

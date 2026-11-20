@@ -15,10 +15,9 @@ own tab bar, rendered by a separate native MuPDF process (one per tab). It sits 
 built-in PDF.js reader and does not replace or modify it.
 
 Need the paper beside something else? Use **split view** (View options) to read two places or two
-papers side by side, or **⋯ → Open in Zotero's own reader**, whose tab Zotero can move into its own
-window for a second screen. (The old "separate window" mode was removed: it had none of the reader's features. A
-real Zotero window hosting this reader is planned, see
-[ADR 006](docs/adr/006-reader-window-host.md).)
+papers side by side, or right-click the Glide tab → **Open in New Window** to move the paper into its own
+window for a second screen (see [ADR 006](docs/adr/006-reader-window-host.md); this window is new and
+lightly tested). The old native "separate window" mode was removed: it had none of the reader's features.
 
 - Continuous scrolling, zoom, fit width / fit page, rotate, crop margins, light / dark / sepia themes
 - Text selection and copy, find with highlights, clickable links, outline and thumbnails
