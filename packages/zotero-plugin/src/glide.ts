@@ -82,6 +82,7 @@ interface PickerItem extends PdfLikeItem {
 }
 
 const MENU_ID = "glide-open";
+const TAB_MENU_ID = "glide-tab-actions";
 const OBSERVER_ID = "glide-tabs";
 
 class GlidePlugin {
@@ -89,6 +90,7 @@ class GlidePlugin {
   version: string | null = null;
   rootURI: string | null = null;
   menuID: string | false | null = null;
+  private tabMenuID: string | false | null = null;
   private subprocessModule: SubprocessModule | null = null;
   private readerTabs = new Set<ReaderTab>();
   private originalGetState: (() => SessionTab[]) | null = null;
@@ -184,13 +186,42 @@ class GlidePlugin {
       target: "main/library/item",
       menus: [entry("Open in Zotero Glide", (i) => this.openInTab(i))],
     });
+
+    // Context actions for a Glide reader tab. `main/tab` is Zotero's supported tab popup target.
+    // The menu context supplies tabID/type; the attachment is held alongside the live ReaderTab.
+    this.tabMenuID = Zotero.MenuManager.registerMenu({
+      menuID: TAB_MENU_ID,
+      pluginID: this.id!,
+      target: "main/tab",
+      menus: [
+        {
+          menuType: "menuitem",
+          onShowing: (_event: Event, context: { menuElem: Element; tabType?: string; tabID?: string; setVisible(visible: boolean): void }) => {
+            context.menuElem.setAttribute("label", "Open in New Window");
+            context.setVisible(context.tabType === TAB_TYPE && !!context.tabID && !![...this.readerTabs].find((t) => t.tabID === context.tabID));
+          },
+          onCommand: async (_event: Event, context: { tabID?: string }) => {
+            const tab = [...this.readerTabs].find((t) => t.tabID === context.tabID);
+            const attachment = tab && this._papers.get(tab)?.attachment;
+            if (!attachment) return;
+            // Zotero's reader can open an attachment in a separate main window. The Glide opener
+            // patch explicitly leaves openInWindow requests to Zotero's built-in reader.
+            await Zotero.Reader.open(attachment.id, undefined, { openInWindow: true });
+          },
+        },
+      ],
+    });
   }
 
   private _unregisterMenu(): void {
     if (this.menuID && Zotero.MenuManager && typeof Zotero.MenuManager.unregisterMenu === "function") {
       Zotero.MenuManager.unregisterMenu(this.menuID);
     }
+    if (this.tabMenuID && Zotero.MenuManager && typeof Zotero.MenuManager.unregisterMenu === "function") {
+      Zotero.MenuManager.unregisterMenu(this.tabMenuID);
+    }
     this.menuID = null;
+    this.tabMenuID = null;
   }
 
   private _hostPlatform(): string {
@@ -349,6 +380,7 @@ class GlidePlugin {
       tabs,
       doc: win.document,
       isMac: !!Zotero.isMac,
+      itemID: attachment.id,
       pdfPath,
       frameDir,
       proc,

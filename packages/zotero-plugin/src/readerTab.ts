@@ -247,6 +247,8 @@ export interface ReaderTabDeps {
   doc: Document;
   isMac: boolean;
   title: string;
+  /** Zotero item ID used by its tab context menu and cross-window actions. */
+  itemID: number;
   pdfPath: string;
   frameDir: string;
   /** Already-spawned helper in `--serve` mode. */
@@ -396,7 +398,8 @@ export class ReaderTab {
     const { id, container } = deps.tabs.add({
       type: TAB_TYPE,
       title: deps.title,
-      data: { icon: "attachmentPDF" },
+      // Zotero's tab context menu uses data.itemID for actions such as “Show in Library”.
+      data: { icon: "attachmentPDF", itemID: deps.itemID },
       select: true,
       onClose: () => this.dispose(),
     });
