@@ -1,7 +1,7 @@
 # ADR 006: opening the reader in its own Zotero window
 
 Status: **Partly implemented, not yet verified in a real Zotero.** The tab menu's "Open in New Window" builds the reader
-in a Zotero `basicViewer` window (blank `about:blank` page; `_createWindowHost` in `glide.ts`) and falls back to Zotero's own
+in a Zotero `basicViewer` window, in place of its `<browser>` (`_createWindowHost` in `glide.ts`) and falls back to Zotero's own
 reader window if that fails. Not done: split view in the window, a library-menu entry, trimming when minimised, and the
 spike checklist below (notably the note editor in that window).
 Builds on: [ADR 002](002-in-tab-reader.md) (the reader is a Zotero tab), [ADR 005](005-split-view.md) (split view)

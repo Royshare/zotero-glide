@@ -67,10 +67,10 @@ interface TabsWindow {
   document: Document;
 }
 
-/** A Zotero viewer window with a blank page for a reader, and what a ReaderTab needs in place of `Zotero_Tabs`. */
+/** A Zotero viewer window with the reader built into it, and what a ReaderTab needs in place of `Zotero_Tabs`. */
 interface WindowHost {
   chromeWin: Window;
-  /** The page's window: its document is where the reader is built. */
+  /** The window whose document holds the reader. */
   win: TabsWindow;
   tabs: ZoteroTabs;
 }
@@ -421,11 +421,11 @@ class GlidePlugin {
 
   /**
    * A Zotero viewer window (the one `Zotero.openInViewer` uses: Zotero's theme, an Edit/Window menu, Cmd/Ctrl+W)
-   * with a blank page the reader is built into, plus the tab-API stand-in a ReaderTab needs. Throws if it does
+   * whose browser is replaced by the reader, plus the tab-API stand-in a ReaderTab needs. Throws if it does
    * not come up, and the caller then falls back to Zotero's own reader window.
    */
   private async _createWindowHost(title: string): Promise<WindowHost> {
-    // Not Zotero.openInViewer: it refuses a second window for a URI it already shows, and one blank page per
+    // Not Zotero.openInViewer: it refuses a second window for a URI it already shows, and one window per
     // reader is exactly what is wanted here. The argument shape is basicViewer.js's own.
     const arg: { uri: string; options: Record<string, unknown>; wrappedJSObject?: unknown } = { uri: "about:blank", options: {} };
     arg.wrappedJSObject = arg;
@@ -437,34 +437,18 @@ class GlidePlugin {
       arg as never
     ) as unknown as Window;
     try {
+      // Build into the viewer window's own (chrome) document, in place of its <browser>. Using the browser's
+      // blank page proved fragile: the page is swapped under you while it loads, no `pageshow` arrives for it,
+      // and Zotero 11's browser element throws on it (`gBrowser.getTabForBrowser is not a function`).
       const doc = await new Promise<Document>((resolve, reject) => {
-        const started = Date.now();
+        const timer = setTimeout(() => reject(new Error("the reader window did not load")), 10000);
         chromeWin.addEventListener(
           "load",
           () => {
-            // basicViewer.js creates and loads its <browser> in a load handler of its own, so wait a tick
+            // basicViewer.js creates and navigates its <browser> in a load handler of its own: let it finish
             setTimeout(() => {
-              const browser = chromeWin.document.documentElement.getElementsByTagName("browser")[0] as unknown as
-                | { contentDocument: Document | null; currentURI?: { spec: string }; webProgress?: { isLoadingDocument: boolean } }
-                | undefined;
-              if (!browser) return reject(new Error("the reader window has no browser"));
-              // The browser holds an initial about:blank that is replaced when basicViewer's own load of about:blank
-              // finishes; a reader built into the initial one is thrown away (an empty "about:blank" window). A
-              // `pageshow` listener (as Zotero.openInViewer's onLoad uses) never fired for this blank page, so
-              // poll instead: take the document once nothing is loading and the same one has stayed put.
-              let last: Document | null = null;
-              let stable = 0;
-              const poll = () => {
-                if (chromeWin.closed) return reject(new Error("the reader window was closed while loading"));
-                const d = browser.contentDocument;
-                const settled = !!d?.body && d.readyState === "complete" && browser.currentURI?.spec === "about:blank" && !browser.webProgress?.isLoadingDocument;
-                stable = settled && d === last ? stable + 1 : 0;
-                last = settled ? d : null;
-                if (stable >= 3 && d) return resolve(d);
-                if (Date.now() - started > 10000) return reject(new Error("the reader window did not load"));
-                setTimeout(poll, 50);
-              };
-              poll();
+              clearTimeout(timer);
+              resolve(chromeWin.document);
             });
           },
           { once: true }
@@ -472,14 +456,15 @@ class GlidePlugin {
       });
       const setTitle = (t: string) => {
         doc.title = t;
-        chromeWin.document.title = t;
       };
       setTitle(title);
-      doc.documentElement.style.cssText = "color-scheme:light dark;background:Canvas;height:100%";
-      doc.body.style.cssText = "margin:0;height:100%;overflow:hidden";
+      const appcontent = doc.getElementById("appcontent") as HTMLElement | null;
+      if (!appcontent) throw new Error("the reader window has no content area");
+      appcontent.querySelector("browser")?.remove();
+      appcontent.style.position = "relative";
       const root = doc.createElementNS("http://www.w3.org/1999/xhtml", "div") as HTMLElement;
-      root.style.cssText = "position:fixed;inset:0;display:flex;flex-direction:column";
-      doc.body.append(root);
+      root.style.cssText = "position:absolute;inset:0;display:flex;flex-direction:column;min-width:0;min-height:0";
+      appcontent.append(root);
       const tabs: ZoteroTabs = {
         add: ({ title: t, onClose }) => {
           if (t) setTitle(t);
@@ -491,7 +476,7 @@ class GlidePlugin {
         rename: (_id, t) => setTitle(t),
         tabHooks: { restoreState: {} },
       };
-      return { chromeWin, win: doc.defaultView as unknown as TabsWindow, tabs };
+      return { chromeWin, win: chromeWin as unknown as TabsWindow, tabs };
     } catch (e) {
       try {
         chromeWin.close();
