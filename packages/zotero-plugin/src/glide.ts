@@ -205,8 +205,10 @@ class GlidePlugin {
             const attachment = tab && this._papers.get(tab)?.attachment;
             if (!attachment) return;
             // Zotero's reader can open an attachment in a separate main window. The Glide opener
-            // patch explicitly leaves openInWindow requests to Zotero's built-in reader.
-            await Zotero.Reader.open(attachment.id, undefined, { openInWindow: true });
+            // patch explicitly leaves openInWindow requests to Zotero's built-in reader. allowDuplicate is
+            // required: our tab carries the same itemID, so without it Zotero finds that tab, just selects it
+            // and returns (the "does nothing" symptom).
+            await Zotero.Reader.open(attachment.id, undefined, { openInWindow: true, allowDuplicate: true });
           },
         },
       ],
