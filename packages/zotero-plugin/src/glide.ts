@@ -437,6 +437,9 @@ class GlidePlugin {
                 clearTimeout(timer);
                 return reject(new Error("the reader window has no browser"));
               }
+              // Only the load of basicViewer's own about:blank counts (`pageshow`, as Zotero.openInViewer's onLoad
+              // does). The browser already holds an initial about:blank document at this point; building into it
+              // gets the reader thrown away when the real one replaces it (an empty "about:blank" window).
               const ready = () => {
                 const d = browser.contentDocument;
                 if (!d?.body) return;
@@ -445,7 +448,6 @@ class GlidePlugin {
                 resolve(d);
               };
               browser.addEventListener("pageshow", ready);
-              ready();
             });
           },
           { once: true }
