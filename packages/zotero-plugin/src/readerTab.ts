@@ -86,7 +86,13 @@ export interface ZoteroTabs {
   select(id: string): void;
   close(ids: string | string[]): void;
   rename(id: string, title: string): void;
-  tabHooks: { restoreState: Record<string, (tab: unknown, index: number) => Promise<{ itemID: number | null }>> };
+  /** Which tab is showing right now (Zotero's `_selectedID`). */
+  selectedID?: string;
+  tabHooks: {
+    restoreState: Record<string, (tab: unknown, index: number) => Promise<{ itemID: number | null }>>;
+    /** Called by `rename(id)` with no title (e.g. whenever the tab's item is modified); the result is the new title. */
+    getTitle?: Record<string, (tab: { title?: string }) => Promise<string> | string>;
+  };
 }
 
 /** An annotation as stored in Zotero (PDF-space rects). */

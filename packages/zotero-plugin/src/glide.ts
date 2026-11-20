@@ -711,13 +711,23 @@ class GlidePlugin {
     if (tabs?.tabHooks?.restoreState) {
       tabs.tabHooks.restoreState[TAB_TYPE] = async () => ({ itemID: null });
     }
+    // The tab carries data.itemID (for Zotero's tab menu), so Zotero calls rename(id) with no title whenever that
+    // item is modified (reading position, annotations...). With no getTitle hook for our type the title became
+    // undefined and the tab went blank; keep the title we set.
+    if (tabs?.tabHooks) {
+      tabs.tabHooks.getTitle ??= {};
+      tabs.tabHooks.getTitle[TAB_TYPE] = (tab) => tab.title ?? "";
+    }
     if (!this.notifierID && Zotero.Notifier?.registerObserver) {
       // Selecting another tab backgrounds our reader tabs (frees their memory).
       this.notifierID = Zotero.Notifier.registerObserver(
         {
           notify: async (event: string, type: string, ids: Array<string | number>) => {
             if (type !== "tab" || event !== "select") return;
-            for (const tab of this.readerTabs) tab.setActive(ids.includes(tab.tabID));
+            // Zotero's live selection is the truth: notifications are delivered asynchronously (and may be
+            // batched), so a stale "another tab was selected" must not trim the tab that is on screen.
+            const selected = (Zotero.getMainWindow() as unknown as TabsWindow | null)?.Zotero_Tabs?.selectedID;
+            for (const tab of this.readerTabs) tab.setActive(selected !== undefined ? tab.tabID === selected : ids.includes(tab.tabID));
           },
         },
         ["tab"],
@@ -729,6 +739,7 @@ class GlidePlugin {
   private _unregisterTabSupport(): void {
     const tabs = (Zotero.getMainWindow() as unknown as TabsWindow | null)?.Zotero_Tabs;
     if (tabs?.tabHooks?.restoreState) delete tabs.tabHooks.restoreState[TAB_TYPE];
+    if (tabs?.tabHooks?.getTitle) delete tabs.tabHooks.getTitle[TAB_TYPE];
     if (tabs && this.originalGetState) tabs.getState = this.originalGetState;
     this.originalGetState = null;
     if (this.notifierID) {
