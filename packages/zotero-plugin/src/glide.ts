@@ -349,16 +349,29 @@ class GlidePlugin {
       }
 
       const title = tabTitleForItem(attachment, pdfPath);
+      // Start the helper (it opens the PDF) while the window is still loading: the two are independent, and
+      // doing them one after the other is what made a new window slow to show the paper.
+      const spawning = this._spawnServe(pdfPath);
       if (target === "window") {
+        spawning.catch(() => {}); // handled below; this only stops an unhandled-rejection warning while we wait
         try {
           host = await this._createWindowHost(title);
         } catch (e) {
           Zotero.debug(`[glide] could not open a reader window: ${e}`);
+          const orphan = await spawning.catch(() => null);
+          if (orphan) {
+            try {
+              await orphan.proc.kill(0);
+            } catch {
+              /* already gone */
+            }
+            IOUtils.remove(orphan.frameDir, { recursive: true, ignoreAbsent: true }).catch(() => {});
+          }
           return false;
         }
       }
 
-      const spawned = await this._spawnServe(pdfPath);
+      const spawned = await spawning;
       proc = spawned.proc;
       frameDir = spawned.frameDir;
       // the new reader reads the saved position when it starts, so the one being replaced must have written it
