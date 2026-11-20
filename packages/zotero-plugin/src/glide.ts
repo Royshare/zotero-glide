@@ -437,30 +437,33 @@ class GlidePlugin {
     ) as unknown as Window;
     try {
       const doc = await new Promise<Document>((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error("the reader window did not load")), 8000);
+        const started = Date.now();
         chromeWin.addEventListener(
           "load",
           () => {
             // basicViewer.js creates and loads its <browser> in a load handler of its own, so wait a tick
             setTimeout(() => {
               const browser = chromeWin.document.documentElement.getElementsByTagName("browser")[0] as unknown as
-                | { contentDocument: Document | null; addEventListener(t: string, f: () => void): void; removeEventListener(t: string, f: () => void): void }
+                | { contentDocument: Document | null; currentURI?: { spec: string }; webProgress?: { isLoadingDocument: boolean } }
                 | undefined;
-              if (!browser) {
-                clearTimeout(timer);
-                return reject(new Error("the reader window has no browser"));
-              }
-              // Only the load of basicViewer's own about:blank counts (`pageshow`, as Zotero.openInViewer's onLoad
-              // does). The browser already holds an initial about:blank document at this point; building into it
-              // gets the reader thrown away when the real one replaces it (an empty "about:blank" window).
-              const ready = () => {
+              if (!browser) return reject(new Error("the reader window has no browser"));
+              // The browser holds an initial about:blank that is replaced when basicViewer's own load of about:blank
+              // finishes; a reader built into the initial one is thrown away (an empty "about:blank" window). A
+              // `pageshow` listener (as Zotero.openInViewer's onLoad uses) never fired for this blank page, so
+              // poll instead: take the document once nothing is loading and the same one has stayed put.
+              let last: Document | null = null;
+              let stable = 0;
+              const poll = () => {
+                if (chromeWin.closed) return reject(new Error("the reader window was closed while loading"));
                 const d = browser.contentDocument;
-                if (!d?.body) return;
-                browser.removeEventListener("pageshow", ready);
-                clearTimeout(timer);
-                resolve(d);
+                const settled = !!d?.body && d.readyState === "complete" && browser.currentURI?.spec === "about:blank" && !browser.webProgress?.isLoadingDocument;
+                stable = settled && d === last ? stable + 1 : 0;
+                last = settled ? d : null;
+                if (stable >= 3 && d) return resolve(d);
+                if (Date.now() - started > 10000) return reject(new Error("the reader window did not load"));
+                setTimeout(poll, 50);
               };
-              browser.addEventListener("pageshow", ready);
+              poll();
             });
           },
           { once: true }
