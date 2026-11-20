@@ -69,9 +69,7 @@ interface TabsWindow {
 
 /** A Zotero viewer window with the reader built into it, and what a ReaderTab needs in place of `Zotero_Tabs`. */
 interface WindowHost {
-  chromeWin: Window;
-  /** The window whose document holds the reader. */
-  win: TabsWindow;
+  win: Window & TabsWindow;
   tabs: ZoteroTabs;
 }
 
@@ -376,7 +374,7 @@ class GlidePlugin {
       proc = spawned.proc;
       frameDir = spawned.frameDir;
       // the new reader reads the saved position when it starts, so the one being replaced must have written it
-      replace?.flushPosition();
+      replace?.savePositionNow();
 
       const tab = new ReaderTab({
         ...this._readerDeps(host?.win ?? win, host?.tabs ?? tabs, attachment as unknown as ZItem, pdfPath, spawned.proc, spawned.frameDir),
@@ -410,7 +408,7 @@ class GlidePlugin {
         IOUtils.remove(frameDir, { recursive: true, ignoreAbsent: true }).catch(() => {});
       }
       try {
-        host?.chromeWin.close();
+        host?.win.close();
       } catch {
         /* already gone */
       }
@@ -435,7 +433,7 @@ class GlidePlugin {
       null as never,
       "chrome,dialog=yes,resizable,centerscreen,menubar,scrollbars",
       arg as never
-    ) as unknown as Window;
+    ) as unknown as Window & TabsWindow;
     try {
       // Build into the viewer window's own (chrome) document, in place of its <browser>. Using the browser's
       // blank page proved fragile: the page is swapped under you while it loads, no `pageshow` arrives for it,
@@ -476,7 +474,7 @@ class GlidePlugin {
         rename: (_id, t) => setTitle(t),
         tabHooks: { restoreState: {} },
       };
-      return { chromeWin, win: chromeWin as unknown as TabsWindow, tabs };
+      return { win: chromeWin, tabs };
     } catch (e) {
       try {
         chromeWin.close();
