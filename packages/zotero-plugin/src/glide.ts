@@ -358,6 +358,7 @@ class GlidePlugin {
           host = await this._createWindowHost(title);
         } catch (e) {
           Zotero.debug(`[glide] could not open a reader window: ${e}`);
+          this._notify(`Couldn't open a Glide window (${e instanceof Error ? e.message : String(e)}); using Zotero's reader instead.`);
           const orphan = await spawning.catch(() => null);
           if (orphan) {
             try {
