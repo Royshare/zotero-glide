@@ -33,8 +33,10 @@ Zotero**: do the live checks listed in the ADR before merging.
 and rejected alternatives: [`docs/adr/002-in-tab-reader.md`](docs/adr/002-in-tab-reader.md).
 In short: `glide-helper --serve` is a headless per-tab render server
 (JSON commands on stdin, whole-page RGBA frames written to files); the plugin
-paints them on a `<canvas>` inside a real `Zotero_Tabs` tab. The old window is
-kept as "Open in Zotero Glide (separate window)".
+paints them on a `<canvas>` inside a real `Zotero_Tabs` tab. The old native window
+("Open in Zotero Glide (separate window)") has since been **removed**: `app.rs`, the `--dock-*` flags, the
+`winit`/`softbuffer` dependencies and `launchGlide.ts` are gone and the helper is `--serve`-only (the v0.1/v0.2
+sections below describe that historical window mode).
 
 **Verified live** against the isolated dev profile (`Zotero 2.app`, version
 11.0-beta.3, driven over RDP; the user's own Zotero was never touched):

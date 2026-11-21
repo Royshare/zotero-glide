@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Zotero Glide contributors
 
-//! Pixel helpers shared by the winit window (`app.rs`) and the headless
-//! in-tab "serve" mode (`serve.rs`).
+//! Pixel helpers for the headless in-tab "serve" mode (`serve.rs`).
 //!
 //! MuPDF renders with premultiplied alpha and clears unpainted page area
 //! to fully transparent (0,0,0,0), not white, when `alpha=true` (see the

@@ -7,6 +7,16 @@
 `Shift+Enter` previous); `Ctrl/Cmd+G` go to page; `Ctrl/Cmd+C` copy selection; `Ctrl/Cmd+A` select all
 text; `Esc` clears the selection / tool / reading mode.
 
+## Side by side, second screen
+
+- **Two places or two papers at once:** View options → **Split View** (side by side or top/bottom; see
+  [ADR 005](adr/005-split-view.md)). The second pane can show any paper with a PDF.
+- **The second monitor:** right-click the Glide tab → **Open in New Window**. The paper moves into its own window with
+  the same reader (split view is not available there yet). If the window cannot be created, Zotero's own reader
+  window opens instead. See [ADR 006](adr/006-reader-window-host.md).
+- **A different app:** **⋯ → Open in Zotero's own reader** or **⋯ → Open in system viewer**.
+- There is no separate native window any more (the v0.1 `winit` one was removed).
+
 ## What it is not
 
 - Not a replacement for Zotero's built-in reader, and not a fork or monkey-patch of it. The plugin never

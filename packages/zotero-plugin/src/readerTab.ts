@@ -86,7 +86,13 @@ export interface ZoteroTabs {
   select(id: string): void;
   close(ids: string | string[]): void;
   rename(id: string, title: string): void;
-  tabHooks: { restoreState: Record<string, (tab: unknown, index: number) => Promise<{ itemID: number | null }>> };
+  /** Which tab is showing right now (Zotero's `_selectedID`). */
+  selectedID?: string;
+  tabHooks: {
+    restoreState: Record<string, (tab: unknown, index: number) => Promise<{ itemID: number | null }>>;
+    /** Called by `rename(id)` with no title (e.g. whenever the tab's item is modified); the result is the new title. */
+    getTitle?: Record<string, (tab: { title?: string }) => Promise<string> | string>;
+  };
 }
 
 /** An annotation as stored in Zotero (PDF-space rects). */
@@ -247,6 +253,8 @@ export interface ReaderTabDeps {
   doc: Document;
   isMac: boolean;
   title: string;
+  /** Zotero item ID used by its tab context menu and cross-window actions. */
+  itemID: number;
   pdfPath: string;
   frameDir: string;
   /** Already-spawned helper in `--serve` mode. */
@@ -396,7 +404,8 @@ export class ReaderTab {
     const { id, container } = deps.tabs.add({
       type: TAB_TYPE,
       title: deps.title,
-      data: { icon: "attachmentPDF" },
+      // Zotero's tab context menu uses data.itemID for actions such as “Show in Library”.
+      data: { icon: "attachmentPDF", itemID: deps.itemID },
       select: true,
       onClose: () => this.dispose(),
     });
@@ -520,6 +529,9 @@ export class ReaderTab {
       this.view.focus();
       this.view.sendViewport();
       this.requestVisible();
+      // The background trim blanked the thumbnails (and a thumbnail reply that arrives while the tab is hidden is
+      // dropped), so redraw the visible ones; nothing else would, until the sidebar was scrolled.
+      this.requestThumbnails();
     } else {
       this.trimTimer = this.d.setTimeout(() => {
         this.trimTimer = null;
@@ -2383,7 +2395,8 @@ export class ReaderTab {
     }, 1200);
   }
 
-  private savePositionNow(): void {
+  /** Writes the reading position now (also called before a reader for the same paper opens in a new window). */
+  savePositionNow(): void {
     if (!this.started || !this.pages.length) return;
     try {
       this.d.positions.save(this.d.positionKey, this.currentPosition());

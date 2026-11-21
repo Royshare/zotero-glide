@@ -33,7 +33,7 @@ npm start                   # hot-reloads on save
 
 | Path | What |
 |---|---|
-| `packages/reader-helper/` | Rust native helper (MuPDF, winit/softbuffer, `--serve` headless mode) |
+| `packages/reader-helper/` | Rust native helper (MuPDF, headless `--serve` render server) |
 | `packages/zotero-plugin/` | Zotero plugin: TypeScript in `src/`, static files in `addon/` |
 | `docs/adr/` | Architecture decisions: read these before changing the design |
 | `scripts/` | Setup, build, benchmark and release helpers |

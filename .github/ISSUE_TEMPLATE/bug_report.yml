@@ -26,7 +26,7 @@ body:
     id: mode
     attributes:
       label: Where it happened
-      options: [In a Zotero tab, Separate window, Standalone helper]
+      options: [In a Zotero tab, In a split-view pane, Standalone helper]
     validations: {required: true}
   - type: textarea
     id: what

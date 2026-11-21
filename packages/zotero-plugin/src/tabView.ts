@@ -458,7 +458,8 @@ li[data-open=true]>.fr-ol-row .fr-twisty svg{transform:rotate(90deg)}
 .fr-switch[aria-checked=true]::after{transform:translateX(16px)}
 .fr-themes{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
 .fr-theme{position:relative;display:flex;align-items:center;justify-content:center;height:38px;border:1px solid var(--fr-border);border-radius:8px;font:inherit;font-size:12.5px;cursor:default;padding:0 4px;overflow:hidden;white-space:nowrap}
-.fr-theme-pill{padding:2px 9px;border-radius:10px;background:Canvas;box-shadow:0 0 0 1px var(--fr-border)}
+.fr-theme-auto{gap:6px}
+.fr-theme-auto-dot{flex:none;width:13px;height:13px;border-radius:50%;box-shadow:0 0 0 1px color-mix(in srgb,CanvasText 40%,transparent)}
 .fr-theme:hover{border-color:color-mix(in srgb,CanvasText 45%,transparent)}
 .fr-theme[aria-pressed=true]{outline:2px solid AccentColor;outline-offset:1px}
 .fr-theme-add{background:none;color:inherit;opacity:.8}
@@ -1589,9 +1590,11 @@ export class ReaderView {
         b.style.background = bg;
         b.style.color = fg;
         if (id === "auto") {
-          // the label sits on a split background: give it a pill of its own so it stays readable
-          const pill = mk("span", "fr-theme-pill", b, name);
-          pill.style.color = "CanvasText";
+          // Follows Zotero's light/dark, so a plain button: a small half-light/half-dark dot says "both" while
+          // the label sits on the ordinary background (text over a split background was hard to read).
+          b.classList.add("fr-theme-auto");
+          mk("span", "fr-theme-auto-dot", b).style.background = "linear-gradient(105deg,#fff 50%,#2f333d 50%)";
+          mk("span", "", b, name);
         } else b.textContent = name;
         b.title = name;
         b.setAttribute("aria-pressed", String(st.theme === id));
@@ -1609,7 +1612,7 @@ export class ReaderView {
           });
         }
       };
-      themeBtn("auto", "Auto", "linear-gradient(105deg,#fff 50%,#2f333d 50%)", "#888");
+      themeBtn("auto", "Auto", "transparent", "inherit");
       themeBtn("light", "Original", "#ffffff", "#222");
       themeBtn("snow", "Snow", SNOW_PALETTE.bg, SNOW_PALETTE.fg);
       themeBtn("sepia", "Sepia", "#f4ecd8", "#4b3b2a");
